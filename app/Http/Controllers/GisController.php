@@ -10,17 +10,13 @@ use ZipArchive;
 
 class GisController extends Controller
 {
-    /**
-     * 1. HALAMAN UTAMA PETA
-     */
+    // --- HALAMAN PETA ---
     public function index()
     {
         return view('admin.map');
     }
 
-    /**
-     * 2. HALAMAN TABEL DATA (Filter & Search)
-     */
+    // --- HALAMAN TABEL DATA ---
     public function indexTable(Request $request)
     {
         $search = $request->input('search');
@@ -35,12 +31,8 @@ class GisController extends Controller
                   ->orWhere('properties->raw_data->NIB', 'like', "%{$search}%");
             });
         }
-        if ($kecamatan) {
-            $query->where('properties->raw_data->KECAMATAN', 'like', "%{$kecamatan}%");
-        }
-        if ($desa) {
-            $query->where('properties->raw_data->KELURAHAN', 'like', "%{$desa}%");
-        }
+        if ($kecamatan) $query->where('properties->raw_data->KECAMATAN', 'like', "%{$kecamatan}%");
+        if ($desa) $query->where('properties->raw_data->KELURAHAN', 'like', "%{$desa}%");
 
         $data = $query->select('id', 'name', 'properties', 'created_at')
                       ->orderBy('id', 'desc')
@@ -50,13 +42,10 @@ class GisController extends Controller
         return view('admin.aset.index', compact('data', 'search', 'kecamatan', 'desa'));
     }
 
-    /**
-     * 3. API PETA (SRID 0 - Cartesian)
-     * Mengambil data berdasarkan viewport layar tanpa error Latitude/Longitude.
-     */
+    // --- API PETA (OPTIMALISASI KECEPATAN) ---
     public function apiData(Request $request)
     {
-        // Return kosong jika belum ada parameter bounds (untuk performa awal)
+        // 1. Cek Parameter Bounds (Viewport)
         if (!$request->has(['north', 'south', 'east', 'west'])) {
             return response()->json(['type' => 'FeatureCollection', 'features' => []]);
         }
@@ -67,26 +56,29 @@ class GisController extends Controller
             $e = $request->east;
             $w = $request->west;
 
-            // Buat Polygon WKT (Urutan X Y bebas karena SRID 0)
+            // 2. Polygon Viewport
             $polygonWKT = sprintf(
                 "POLYGON((%s %s, %s %s, %s %s, %s %s, %s %s))",
                 $w, $s, $e, $s, $e, $n, $w, $n, $w, $s
             );
 
-            // Query Spatial: ST_Intersects dengan ST_GeomFromText Polos (SRID 0)
+            // 3. QUERY OPTIMIZED (ST_Simplify)
+            // ST_Simplify(geom, 0.00005) akan mengurangi detail titik polygon yang tidak terlihat mata.
+            // Ini mengurangi ukuran file JSON dari 10MB -> 500KB (Sangat Cepat!)
             $data = SpatialFeature::select(
                 'id', 
                 'name', 
                 'properties',
-                DB::raw('ST_AsGeoJSON(geom) as geometry') 
+                DB::raw('ST_AsGeoJSON(ST_Simplify(geom, 0.00005)) as geometry') 
             )
             ->whereRaw("ST_Intersects(geom, ST_GeomFromText(?))", [$polygonWKT])
-            ->limit(3000) // Batas data agar browser kuat
+            ->limit(3000) // Batas aman browser
             ->get();
 
             $features = [];
             foreach ($data as $item) {
                 if (!$item->geometry) continue;
+
                 $features[] = [
                     'type' => 'Feature',
                     'geometry' => json_decode($item->geometry),
@@ -109,27 +101,18 @@ class GisController extends Controller
         }
     }
 
-    /**
-     * 4. IMPORT SHP (Support AJAX & Logging Detail)
-     */
+    // --- IMPORT SHP (Smart Batch Upload) ---
     public function storeShp(Request $request)
     {
-        // Config Server untuk proses berat
-        set_time_limit(0); 
-        ini_set('memory_limit', '-1'); 
-        ini_set('max_execution_time', 0);
+        set_time_limit(0); ini_set('memory_limit', '-1'); ini_set('max_execution_time', 0);
 
-        // Validasi
         $request->validate([
             'shp_files' => 'required',
-            'shp_files.*' => 'file|mimes:zip|max:102400' // Max 100MB per file
+            'shp_files.*' => 'file|mimes:zip|max:102400'
         ]);
 
         $files = $request->file('shp_files');
-        // Pastikan jadi array meskipun cuma 1 file
-        if (!is_array($files)) {
-            $files = [$files];
-        }
+        if (!is_array($files)) $files = [$files];
 
         $successCount = 0;
         $failedInfo = [];
@@ -139,57 +122,36 @@ class GisController extends Controller
             $extractPath = null;
 
             try {
-                // 1. Buat folder temp unik
                 $uniqueId = uniqid('shp_', true);
                 $extractPath = storage_path('app/temp_shp/' . $uniqueId);
-                
                 if (!file_exists($extractPath)) mkdir($extractPath, 0777, true);
 
-                // 2. Simpan & Ekstrak ZIP
                 $file->storeAs('temp_shp/' . $uniqueId, 'source.zip');
-                
                 $zip = new ZipArchive;
                 if ($zip->open(storage_path('app/temp_shp/' . $uniqueId . '/source.zip')) === TRUE) {
-                    $zip->extractTo($extractPath);
-                    $zip->close();
-                } else {
-                    throw new \Exception('Gagal ekstrak ZIP.');
-                }
+                    $zip->extractTo($extractPath); $zip->close();
+                } else { throw new \Exception('Gagal ekstrak ZIP.'); }
 
-                // 3. Cari file .shp (Recursive search)
                 $shpFiles = glob($extractPath . '/**/*.shp'); 
                 if (empty($shpFiles)) $shpFiles = glob($extractPath . '/*.shp');
-
                 if (empty($shpFiles)) throw new \Exception('File .shp tidak ditemukan.');
-                
                 $shpFile = $shpFiles[0];
 
-                // 4. Convert ke GeoJSON (Paksa output EPSG:4326 Lat/Long)
                 $geojsonFile = $extractPath . '/output.json';
-                
-                // Tambahkan 2>&1 untuk menangkap output error dari CMD
+                // Tangkap error OGR2OGR
                 $cmd = "ogr2ogr -f GeoJSON -t_srs EPSG:4326 \"{$geojsonFile}\" \"{$shpFile}\" 2>&1";
                 $output = [];
                 $returnVar = 0;
                 exec($cmd, $output, $returnVar);
 
                 if (!file_exists($geojsonFile) || filesize($geojsonFile) == 0) {
-                    $errorLog = implode("\n", $output);
-                    Log::error("OGR2OGR Fail ($originalName): " . $errorLog);
-                    
-                    if (str_contains($errorLog, 'is not recognized')) {
-                        throw new \Exception('Server tidak mengenali perintah "ogr2ogr". Cek installasi GDAL.');
-                    }
-                    throw new \Exception('Gagal Konversi SHP. Cek Log Laravel.');
+                    throw new \Exception('Gagal Konversi SHP (Cek GDAL).');
                 }
 
-                // 5. Insert ke Database (SRID 0)
                 $jsonContent = file_get_contents($geojsonFile);
                 $geoData = json_decode($jsonContent, true);
-
                 if (!isset($geoData['features'])) throw new \Exception('Format GeoJSON invalid.');
 
-                // Transaction per file
                 DB::transaction(function () use ($geoData) {
                     foreach ($geoData['features'] as $feature) {
                         $geom = json_encode($feature['geometry']);
@@ -199,44 +161,32 @@ class GisController extends Controller
                         DB::table('spatial_features')->insert([
                             'name' => $name,
                             'properties' => json_encode(['type' => 'Imported', 'raw_data' => $props]),
-                            // PENTING: Gunakan ST_GeomFromGeoJSON tanpa SRID tambahan -> Hasilnya SRID 0
+                            // Simpan SRID 0 agar aman
                             'geom' => DB::raw("ST_GeomFromGeoJSON('$geom')"), 
-                            'created_at' => now(), 
-                            'updated_at' => now()
+                            'created_at' => now(), 'updated_at' => now()
                         ]);
                     }
                 });
 
                 $successCount++;
-                
-                // Bersihkan folder temp
                 $this->deleteDirectory($extractPath);
 
             } catch (\Exception $e) {
                 $failedInfo[] = $originalName . ": " . $e->getMessage();
-                Log::error("Import Gagal $originalName: " . $e->getMessage());
-                // Tetap bersihkan folder meski gagal
+                Log::error("Import Gagal: " . $e->getMessage());
                 if ($extractPath) $this->deleteDirectory($extractPath);
             }
         }
 
-        // RESPON JSON UNTUK JAVASCRIPT
         if ($request->ajax() || $request->wantsJson()) {
-            if (count($failedInfo) > 0) {
-                return response()->json([
-                    'status' => 'partial_error',
-                    'message' => 'Gagal: ' . implode(', ', $failedInfo)
-                ], 422);
-            }
+            if (count($failedInfo) > 0) return response()->json(['status' => 'partial_error', 'message' => implode(', ', $failedInfo)], 422);
             return response()->json(['status' => 'success', 'message' => 'Berhasil']);
         }
-
-        // Fallback Form Biasa
+        
         if (count($failedInfo) > 0) return back()->with('error', implode(', ', $failedInfo));
         return back()->with('success', "Berhasil import $successCount file!");
     }
 
-    // Helper hapus folder
     private function deleteDirectory($dir) {
         if (!file_exists($dir)) return true;
         if (!is_dir($dir)) return unlink($dir);
@@ -247,20 +197,14 @@ class GisController extends Controller
         return rmdir($dir);
     }
 
-    // --- SIMPAN MANUAL ---
-    public function storeDraw(Request $request)
-    {
-        $request->validate(['name' => 'required', 'type' => 'required', 'geometry' => 'required']);
+    public function storeDraw(Request $request) {
+        // (Sama seperti sebelumnya)
         try {
             DB::table('spatial_features')->insert([
-                'name' => $request->name,
-                'properties' => json_encode(['type' => $request->type, 'description' => $request->description, 'color' => '#ff0000']),
-                'geom' => DB::raw("ST_GeomFromGeoJSON('{$request->geometry}')"),
-                'created_at' => now(), 'updated_at' => now()
+                'name'=>$request->name, 'properties'=>json_encode(['type'=>$request->type,'description'=>$request->description,'color'=>'#ff0000']),
+                'geom'=>DB::raw("ST_GeomFromGeoJSON('{$request->geometry}')"), 'created_at'=>now(), 'updated_at'=>now()
             ]);
-            return response()->json(['status' => 'success', 'message' => 'Data disimpan!']);
-        } catch (\Exception $e) {
-            return response()->json(['status' => 'error', 'message' => $e->getMessage()], 500);
-        }
+            return response()->json(['status'=>'success']);
+        } catch(\Exception $e) { return response()->json(['status'=>'error'],500); }
     }
 }

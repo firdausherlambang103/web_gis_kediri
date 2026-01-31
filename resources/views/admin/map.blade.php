@@ -14,6 +14,11 @@
         }
         .progress-group { display: none; margin-top: 15px; }
         .upload-log { max-height: 100px; overflow-y: auto; font-size: 0.85rem; margin-top: 10px; border: 1px solid #ddd; padding: 5px; background: #f9f9f9; }
+        
+        /* Gaya Tabel Popup */
+        .popup-table td { padding: 3px 5px; border-bottom: 1px solid #eee; font-size: 12px; }
+        .popup-key { font-weight: bold; color: #555; width: 40%; }
+        .popup-val { color: #000; }
     </style>
 @endpush
 
@@ -49,7 +54,7 @@
             </div>
             <div class="modal-body">
                 <div class="alert alert-info small">
-                    <i class="fas fa-info-circle"></i> <b>Tips:</b> Pilih banyak file .zip sekaligus. Sistem akan menguploadnya satu per satu agar stabil.
+                    <i class="fas fa-info-circle"></i> <b>Tips:</b> Pilih banyak file .zip sekaligus.
                 </div>
                 
                 <div class="form-group">
@@ -81,7 +86,43 @@
     </div>
 </div>
 
-@include('admin.aset.partials.modals') 
+<div class="modal fade" id="inputDataModal" data-backdrop="static">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 class="modal-title">Input Data Baru</h4>
+                <button type="button" class="close cancel-draw" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="formAset">
+                    <input type="hidden" id="geometryData" name="geometry">
+                    <div class="form-group">
+                        <label>Nama Aset <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="namaAset" required placeholder="Contoh: Tanah Wakaf">
+                    </div>
+                    <div class="form-group">
+                        <label>Jenis Aset</label>
+                        <select class="form-control" id="jenisAset" required>
+                            <option value="Tanah">Tanah</option>
+                            <option value="Bangunan">Bangunan</option>
+                            <option value="Jalan">Jalan</option>
+                            <option value="Lainnya">Lainnya</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Keterangan</label>
+                        <textarea class="form-control" id="ketAset" rows="2"></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-block">Simpan Data</button>
+                </form>
+            </div>
+            <div class="modal-footer justify-content-between">
+                <button type="button" class="btn btn-default cancel-draw" data-dismiss="modal">Batal</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 @endsection
 
 @push('scripts')
@@ -94,130 +135,92 @@
 <script>
     $(document).ready(function () { bsCustomFileInput.init(); });
 
-    // --- 1. LOGIKA SMART BATCH UPLOAD (Core Solution) ---
+    // --- 1. LOGIKA SMART UPLOAD ---
     var selectedFiles = [];
-
     $('#shpFilesInput').on('change', function() {
         selectedFiles = Array.from($(this)[0].files);
         var label = selectedFiles.length > 0 ? selectedFiles.length + ' file dipilih' : 'Pilih file...';
         $(this).next('.custom-file-label').html(label);
-        
         var names = selectedFiles.map(f => f.name).join(', ');
         $('#fileListInfo').text(names.substring(0, 80) + (names.length>80?'...':''));
     });
 
     async function startBatchUpload() {
-        if (selectedFiles.length === 0) {
-            Swal.fire('Warning', 'Pilih minimal satu file ZIP!', 'warning');
-            return;
-        }
-
-        // Kunci UI
+        if (selectedFiles.length === 0) { Swal.fire('Warning', 'Pilih file dulu!', 'warning'); return; }
         $('#btnStartUpload').prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Memproses...');
         $('#shpFilesInput').prop('disabled', true);
-        $('#progressArea').show();
-        $('#uploadLog').show().html('');
+        $('#progressArea').show(); $('#uploadLog').show().html('');
 
-        let successCount = 0;
-        let failCount = 0;
-
-        // LOOPING UPLOAD (Satu per Satu)
+        let successCount = 0; let failCount = 0;
         for (let i = 0; i < selectedFiles.length; i++) {
             let file = selectedFiles[i];
-            
-            // Update Progress
             let percent = Math.round(((i) / selectedFiles.length) * 100);
             $('#progressBar').css('width', percent + '%');
-            $('#progressText').text(`Proses ${i+1} dari ${selectedFiles.length}: ${file.name}`);
+            $('#progressText').text(`Proses ${i+1}/${selectedFiles.length}: ${file.name}`);
             $('#progressPercent').text(percent + '%');
 
-            // Siapkan Data
-            let formData = new FormData();
-            formData.append('shp_files[]', file); // Array name agar diterima controller
-
+            let formData = new FormData(); formData.append('shp_files[]', file);
             try {
                 let response = await fetch("{{ route('asset.uploadShp') }}", {
-                    method: 'POST',
-                    headers: {
-                        'X-CSRF-TOKEN': '{{ csrf_token() }}',
-                        'Accept': 'application/json' // PENTING: Minta respon JSON
-                    },
-                    body: formData
+                    method: 'POST', headers: { 'X-CSRF-TOKEN': '{{ csrf_token() }}', 'Accept': 'application/json' }, body: formData
                 });
-
-                // Cek apakah response JSON valid (bukan error HTML)
-                const contentType = response.headers.get("content-type");
-                if (!contentType || !contentType.includes("application/json")) {
-                    throw new Error("Server Error (Bukan JSON). Cek ukuran file/PHP logs.");
-                }
-
+                const type = response.headers.get("content-type");
+                if (!type || !type.includes("json")) throw new Error("Server Error (HTML Response)");
                 let result = await response.json();
-
-                if (response.ok) {
-                    successCount++;
-                } else {
-                    failCount++;
-                    $('#uploadLog').append(`<div class="text-danger small"><i class="fas fa-times"></i> <b>${file.name}</b>: ${result.message}</div>`);
-                }
-
-            } catch (error) {
-                failCount++;
-                $('#uploadLog').append(`<div class="text-danger small"><i class="fas fa-times"></i> <b>${file.name}</b>: ${error.message}</div>`);
-            }
+                if (response.ok) successCount++; else { failCount++; $('#uploadLog').append(`<div class="text-danger small"><i class="fas fa-times"></i> ${file.name}: ${result.message}</div>`); }
+            } catch (error) { failCount++; $('#uploadLog').append(`<div class="text-danger small"><i class="fas fa-times"></i> ${file.name}: ${error.message}</div>`); }
         }
-
-        // Selesai
         $('#progressBar').css('width', '100%').addClass(failCount > 0 ? 'bg-warning' : 'bg-success');
-        $('#progressText').text('Selesai!');
-        $('#progressPercent').text('100%');
+        $('#progressText').text('Selesai!'); $('#progressPercent').text('100%');
         $('#btnStartUpload').html('Selesai').removeClass('btn-success').addClass('btn-secondary');
-
-        // Refresh Peta
         loadData();
-
-        Swal.fire({
-            title: 'Selesai',
-            text: `Berhasil: ${successCount}, Gagal: ${failCount}`,
-            icon: failCount === 0 ? 'success' : 'warning'
-        });
+        Swal.fire({ title: 'Selesai', text: `Berhasil: ${successCount}, Gagal: ${failCount}`, icon: failCount === 0 ? 'success' : 'warning' });
     }
 
     function resetUploadModal() {
         $('#btnStartUpload').prop('disabled', false).html('<i class="fas fa-upload"></i> Mulai Upload').addClass('btn-success').removeClass('btn-secondary');
         $('#shpFilesInput').prop('disabled', false).val('').next('.custom-file-label').html('Pilih file ZIP...');
-        $('#progressArea').hide();
-        $('#progressBar').css('width', '0%').removeClass('bg-success bg-warning').addClass('bg-primary');
-        $('#uploadLog').hide().html('');
-        selectedFiles = [];
-        $('#fileListInfo').text('');
+        $('#progressArea').hide(); $('#uploadLog').hide().html(''); selectedFiles = []; $('#fileListInfo').text('');
     }
 
-    // --- 2. LOGIKA PETA & DATA ---
+    // --- 2. LOGIKA PETA & DETAIL POPUP DINAMIS ---
     var map = L.map('map').setView([-7.629, 111.52], 13);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
     var googleSat = L.tileLayer('http://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',{ maxZoom: 20, subdomains:['mt0','mt1','mt2','mt3'] });
     L.control.layers({ "Peta Jalan": L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'), "Satelit": googleSat }).addTo(map);
 
     var geoJsonLayer = L.geoJSON(null, {
-        style: function(f) { return { color: f.properties.color||'#3388ff', weight: 2 }; },
+        style: function(f) { return { color: f.properties.color||'#3388ff', weight: 1, opacity: 1, fillOpacity: 0.4 }; },
         onEachFeature: function(f, l) {
-            var p = f.properties;
-            var c = p.raw_data ? 
-                `<b>${p.name}</b><br>NIB: ${p.raw_data.NIB||'-'}<br>Luas: ${p.raw_data.LUASTERTUL||0}` : 
-                `<b>${p.name}</b>`;
-            l.bindPopup(c);
+            var props = f.properties;
+            var content = '';
+            
+            // LOGIKA DETAIL DINAMIS: Loop semua data raw
+            if (props.raw_data) {
+                var rows = '';
+                var raw = props.raw_data;
+                for (var key in raw) {
+                    if (raw.hasOwnProperty(key) && raw[key] !== null && raw[key] !== "") {
+                        // Abaikan kolom sistem/internal jika ada
+                        if(['the_geom', 'SHAPE_Leng', 'SHAPE_Area'].includes(key)) continue;
+                        rows += `<tr><td class="popup-key">${key}</td><td class="popup-val">${raw[key]}</td></tr>`;
+                    }
+                }
+                content = `
+                    <div style="min-width:250px; max-height:300px; overflow-y:auto;">
+                        <h6 class="text-primary font-weight-bold border-bottom pb-1 mb-2">${props.name}</h6>
+                        <table class="table table-sm table-striped popup-table mb-0"><tbody>${rows}</tbody></table>
+                    </div>`;
+            } else {
+                content = `<b>${props.name}</b><br><span class="badge badge-info">${props.type}</span><br>${props.description||'-'}`;
+            }
+            l.bindPopup(content);
         }
     }).addTo(map);
 
     var abortController = null;
     function loadData() {
-        // Jangan load jika zoom terlalu jauh (berat)
-        if(map.getZoom() < 10) { 
-            geoJsonLayer.clearLayers(); 
-            $('#map-loading').hide(); 
-            return; 
-        }
-        
+        if(map.getZoom() < 10) { geoJsonLayer.clearLayers(); $('#map-loading').hide(); return; }
         $('#map-loading').show();
         var b = map.getBounds();
         var p = new URLSearchParams({ north:b.getNorth(), south:b.getSouth(), east:b.getEast(), west:b.getWest() });
@@ -241,10 +244,8 @@
     map.addControl(drawControl);
     
     map.on(L.Draw.Event.CREATED, function (e) {
-        var layer = e.layer; 
-        $('#geometryData').val(JSON.stringify(layer.toGeoJSON().geometry));
-        $('#inputDataModal').modal('show'); 
-        drawnItems.addLayer(layer);
+        var layer = e.layer; $('#geometryData').val(JSON.stringify(layer.toGeoJSON().geometry));
+        $('#inputDataModal').modal('show'); drawnItems.addLayer(layer);
     });
     
     $('.cancel-draw').click(function() { drawnItems.clearLayers(); });
