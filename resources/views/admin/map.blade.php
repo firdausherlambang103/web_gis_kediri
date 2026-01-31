@@ -5,40 +5,92 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
     <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
+    
     <style>
-        #map { height: 75vh; width: 100%; border-radius: 4px; border: 1px solid #ced4da; }
+        #map { height: 85vh; width: 100%; border: 1px solid #ced4da; border-radius: 4px; }
+        
+        /* Indikator Loading */
         #map-loading {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            z-index: 9999; background: rgba(255, 255, 255, 0.9); padding: 10px 20px;
-            border-radius: 50px; font-weight: bold; display: none; pointer-events: none;
+            z-index: 2000; background: rgba(255, 255, 255, 0.95); padding: 15px 30px;
+            border-radius: 50px; font-weight: bold; display: none; 
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); color: #333;
         }
+
+        /* Panel Filter Mengambang */
+        .map-filter-box {
+            position: absolute; top: 10px; right: 10px; z-index: 1000;
+            background: rgba(255, 255, 255, 0.95); padding: 15px; border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2); width: 280px;
+            backdrop-filter: blur(5px);
+        }
+
+        /* Style Cluster */
+        .cluster-marker {
+            background-color: rgba(220, 53, 69, 0.85);
+            border: 3px solid white; border-radius: 50%;
+            color: white; font-weight: bold; text-align: center;
+            line-height: 30px; box-shadow: 0 3px 5px rgba(0,0,0,0.3);
+        }
+
+        /* Tabel Popup Detail */
+        .popup-table { width: 100%; font-size: 11px; margin-top: 5px; }
+        .popup-table td { padding: 3px 0; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
+        .popup-key { font-weight: bold; color: #666; width: 35%; padding-right: 5px; }
+        .popup-val { color: #000; font-weight: 500; }
+        
+        /* Upload Progress */
         .progress-group { display: none; margin-top: 15px; }
         .upload-log { max-height: 100px; overflow-y: auto; font-size: 0.85rem; margin-top: 10px; border: 1px solid #ddd; padding: 5px; background: #f9f9f9; }
-        
-        /* Gaya Tabel Popup */
-        .popup-table td { padding: 3px 5px; border-bottom: 1px solid #eee; font-size: 12px; }
-        .popup-key { font-weight: bold; color: #555; width: 40%; }
-        .popup-val { color: #000; }
     </style>
 @endpush
 
 @section('content')
 <div class="row">
     <div class="col-12">
-        <div class="card card-primary card-outline">
-            <div class="card-header">
-                <h3 class="card-title"><i class="fas fa-map-marked-alt mr-1"></i> Peta Digital</h3>
-                <div class="card-tools">
-                    <button class="btn btn-default btn-sm" onclick="map.fitBounds(geoJsonLayer.getBounds())">
-                        <i class="fas fa-compress-arrows-alt"></i> Zoom Data
+        <div class="card card-primary card-outline p-0 mb-0">
+            <div class="card-body p-0 position-relative">
+                
+                <div id="map-loading">
+                    <i class="fas fa-circle-notch fa-spin text-primary mr-2"></i> 
+                    <span id="loading-text">Memuat Data...</span>
+                </div>
+
+                <div class="map-filter-box">
+                    <h6 class="font-weight-bold mb-3"><i class="fas fa-layer-group text-primary"></i> Filter Peta</h6>
+                    
+                    <div class="form-group mb-2">
+                        <label class="small mb-1">Pencarian (Nama/NIB)</label>
+                        <div class="input-group input-group-sm">
+                            <input type="text" id="searchMap" class="form-control" placeholder="Contoh: 00123...">
+                            <div class="input-group-append">
+                                <button class="btn btn-default" onclick="$('#searchMap').val(''); loadData();"><i class="fas fa-times"></i></button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-group mb-3">
+                        <label class="small mb-1">Tipe Hak</label>
+                        <select id="filterHak" class="form-control form-control-sm">
+                            <option value="">Semua Data</option>
+                            <option value="HM">Hak Milik (HM)</option>
+                            <option value="HGB">Hak Guna Bangunan</option>
+                            <option value="HP">Hak Pakai (HP)</option>
+                            <option value="WAKAF">Tanah Wakaf</option>
+                        </select>
+                    </div>
+
+                    <button class="btn btn-primary btn-sm btn-block shadow-sm" onclick="loadData()">
+                        <i class="fas fa-search mr-1"></i> Terapkan Filter
                     </button>
-                    <button class="btn btn-success btn-sm" data-toggle="modal" data-target="#uploadModal">
-                        <i class="fas fa-file-import"></i> Upload SHP
+                    
+                    <hr class="my-2">
+                    
+                    <button class="btn btn-success btn-sm btn-block shadow-sm" data-toggle="modal" data-target="#uploadModal">
+                        <i class="fas fa-cloud-upload-alt mr-1"></i> Upload SHP
                     </button>
                 </div>
-            </div>
-            <div class="card-body p-0 position-relative">
-                <div id="map-loading"><i class="fas fa-spinner fa-spin text-primary"></i> Memuat Data...</div>
+
                 <div id="map"></div>
             </div>
         </div>
@@ -54,9 +106,8 @@
             </div>
             <div class="modal-body">
                 <div class="alert alert-info small">
-                    <i class="fas fa-info-circle"></i> <b>Tips:</b> Pilih banyak file .zip sekaligus.
+                    <i class="fas fa-info-circle"></i> Pilih banyak file <b>.zip</b> sekaligus. Sistem akan memproses satu per satu agar tidak error.
                 </div>
-                
                 <div class="form-group">
                     <div class="custom-file">
                         <input type="file" class="custom-file-input" id="shpFilesInput" accept=".zip" multiple>
@@ -64,7 +115,6 @@
                     </div>
                     <small id="fileListInfo" class="text-muted mt-2"></small>
                 </div>
-
                 <div class="progress-group" id="progressArea">
                     <div class="d-flex justify-content-between small mb-1">
                         <span id="progressText">Menyiapkan...</span>
@@ -86,42 +136,7 @@
     </div>
 </div>
 
-<div class="modal fade" id="inputDataModal" data-backdrop="static">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h4 class="modal-title">Input Data Baru</h4>
-                <button type="button" class="close cancel-draw" data-dismiss="modal">&times;</button>
-            </div>
-            <div class="modal-body">
-                <form id="formAset">
-                    <input type="hidden" id="geometryData" name="geometry">
-                    <div class="form-group">
-                        <label>Nama Aset <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" id="namaAset" required placeholder="Contoh: Tanah Wakaf">
-                    </div>
-                    <div class="form-group">
-                        <label>Jenis Aset</label>
-                        <select class="form-control" id="jenisAset" required>
-                            <option value="Tanah">Tanah</option>
-                            <option value="Bangunan">Bangunan</option>
-                            <option value="Jalan">Jalan</option>
-                            <option value="Lainnya">Lainnya</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Keterangan</label>
-                        <textarea class="form-control" id="ketAset" rows="2"></textarea>
-                    </div>
-                    <button type="submit" class="btn btn-primary btn-block">Simpan Data</button>
-                </form>
-            </div>
-            <div class="modal-footer justify-content-between">
-                <button type="button" class="btn btn-default cancel-draw" data-dismiss="modal">Batal</button>
-            </div>
-        </div>
-    </div>
-</div>
+@include('admin.aset.partials.modals') 
 
 @endsection
 
@@ -135,7 +150,172 @@
 <script>
     $(document).ready(function () { bsCustomFileInput.init(); });
 
-    // --- 1. LOGIKA SMART UPLOAD ---
+    // === 1. KONFIGURASI PETA ===
+    // Zoom control dipindah ke kanan bawah agar tidak tertutup panel filter
+    var map = L.map('map', { zoomControl: false }).setView([-7.8, 112.0], 12); 
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+    // Layer Satelit & Jalan
+    var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OSM' });
+    var googleSat = L.tileLayer('http://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',{ maxZoom: 20, subdomains:['mt0','mt1','mt2','mt3'] });
+    
+    osm.addTo(map); // Default OSM
+    L.control.layers({ "Peta Jalan": osm, "Satelit": googleSat }, null, { position: 'bottomright' }).addTo(map);
+
+    // === 2. FUNGSI WARNA BERDASARKAN HAK ===
+    function getColorByHak(tipe) {
+        if (!tipe) return '#3388ff'; // Default Biru
+        tipe = tipe.toString().toUpperCase();
+        
+        if (tipe.includes('HM') || tipe.includes('MILIK')) return '#28a745'; // Hijau
+        if (tipe.includes('HGB') || tipe.includes('BANGUNAN')) return '#ffc107'; // Kuning
+        if (tipe.includes('HP') || tipe.includes('PAKAI')) return '#17a2b8'; // Biru Muda
+        if (tipe.includes('WAKAF')) return '#6f42c1'; // Ungu
+        return '#3388ff'; // Default
+    }
+
+    var selectedLayer = null; // Simpan layer yg di-klik
+
+    // === 3. LAYER GEOJSON UTAMA ===
+    var geoJsonLayer = L.geoJSON(null, {
+        
+        // Style Polygon (Warna Warni)
+        style: function(feature) {
+            var raw = feature.properties.raw_data || {};
+            // Ganti 'TIPE_HAK' dengan nama kolom asli di SHP Anda jika berbeda
+            var tipe = raw.TIPE_HAK || raw.REMARK || raw.PENGGUNAAN; 
+            
+            return {
+                color: getColorByHak(tipe),
+                fillColor: getColorByHak(tipe),
+                weight: 1,
+                opacity: 1,
+                fillOpacity: 0.5
+            };
+        },
+
+        // Render Cluster Point
+        pointToLayer: function(feature, latlng) {
+            if (feature.properties.type === 'cluster') {
+                var count = feature.properties.count;
+                var size = count > 100 ? 40 : (count > 50 ? 30 : 25);
+                return L.marker(latlng, {
+                    icon: L.divIcon({
+                        className: 'cluster-marker',
+                        html: count,
+                        iconSize: [size, size]
+                    })
+                });
+            }
+            return L.marker(latlng);
+        },
+
+        // Interaksi Tiap Fitur
+        onEachFeature: function(feature, layer) {
+            
+            // A. KLIK CLUSTER
+            if (feature.properties.type === 'cluster') {
+                layer.bindPopup(`<b>Area Padat</b><br>${feature.properties.count} Aset.<br>Zoom in untuk detail.`);
+                layer.on('click', function() { map.flyTo(layer.getLatLng(), map.getZoom() + 2); });
+            } 
+            // B. KLIK POLYGON (HIGHLIGHT)
+            else {
+                layer.on('click', function(e) {
+                    // Reset layer sebelumnya
+                    if (selectedLayer) {
+                        geoJsonLayer.resetStyle(selectedLayer);
+                    }
+                    
+                    // Highlight layer yg diklik (ORANYE)
+                    selectedLayer = e.target;
+                    selectedLayer.setStyle({
+                        color: '#ff4500', // Border Oranye Merah
+                        fillColor: '#ffa500', // Isi Oranye
+                        weight: 3,
+                        fillOpacity: 0.8
+                    });
+                    
+                    if (!L.Browser.ie && !L.Browser.opera && !L.Browser.edge) {
+                        selectedLayer.bringToFront();
+                    }
+                });
+
+                // C. POPUP DETAIL DINAMIS
+                var props = feature.properties;
+                var raw = props.raw_data;
+                var rows = '';
+
+                if (raw) {
+                    for (var key in raw) {
+                        // Filter kolom sistem
+                        if (raw.hasOwnProperty(key) && raw[key] && !['geometry','SHAPE_Leng','SHAPE_Area'].includes(key)) {
+                            rows += `<tr><td class="popup-key">${key}</td><td class="popup-val">${raw[key]}</td></tr>`;
+                        }
+                    }
+                }
+
+                var content = `
+                    <div style="min-width:220px; max-height:250px; overflow-y:auto;">
+                        <h6 class="text-primary font-weight-bold border-bottom pb-2 mb-2">
+                            ${props.name}
+                        </h6>
+                        <table class="popup-table"><tbody>${rows}</tbody></table>
+                    </div>`;
+                
+                layer.bindPopup(content);
+            }
+        }
+    }).addTo(map);
+
+    // === 4. LOAD DATA (DARI SERVER) ===
+    var abortController = null;
+
+    function loadData() {
+        $('#map-loading').fadeIn();
+        $('#loading-text').text("Memuat Data...");
+
+        var bounds = map.getBounds();
+        var search = $('#searchMap').val();
+        var hak = $('#filterHak').val();
+
+        var params = new URLSearchParams({
+            north: bounds.getNorth(), south: bounds.getSouth(),
+            east: bounds.getEast(), west: bounds.getWest(),
+            zoom: map.getZoom(),
+            search: search,
+            hak: hak
+        });
+
+        if (abortController) abortController.abort();
+        abortController = new AbortController();
+
+        fetch("{{ route('api.assets') }}?" + params.toString(), { signal: abortController.signal })
+            .then(res => res.json())
+            .then(data => {
+                geoJsonLayer.clearLayers();
+                if(data.features && data.features.length > 0) {
+                    geoJsonLayer.addData(data);
+                    
+                    // Notifikasi UI
+                    if(data.strategy === 'cluster') $('#loading-text').text("Mode Cluster (Zoom In untuk Detail)");
+                    else if(data.strategy === 'simplified') $('#loading-text').text("Mode Cepat (Simplified)");
+                    else $('#loading-text').text("Mode Detail");
+                    
+                    setTimeout(() => $('#map-loading').fadeOut(), 1000);
+                } else {
+                    $('#loading-text').text("Tidak ada data di area ini.");
+                    setTimeout(() => $('#map-loading').fadeOut(), 2000);
+                }
+            })
+            .catch(err => {
+                if (err.name !== 'AbortError') $('#map-loading').fadeOut();
+            });
+    }
+
+    map.on('moveend', loadData);
+    loadData();
+
+    // === 5. LOGIKA SMART UPLOAD ===
     var selectedFiles = [];
     $('#shpFilesInput').on('change', function() {
         selectedFiles = Array.from($(this)[0].files);
@@ -165,7 +345,7 @@
                     method: 'POST', headers: { 'X-CSRF-TOKEN': '{{ csrf_token() }}', 'Accept': 'application/json' }, body: formData
                 });
                 const type = response.headers.get("content-type");
-                if (!type || !type.includes("json")) throw new Error("Server Error (HTML Response)");
+                if (!type || !type.includes("json")) throw new Error("Server Error HTML");
                 let result = await response.json();
                 if (response.ok) successCount++; else { failCount++; $('#uploadLog').append(`<div class="text-danger small"><i class="fas fa-times"></i> ${file.name}: ${result.message}</div>`); }
             } catch (error) { failCount++; $('#uploadLog').append(`<div class="text-danger small"><i class="fas fa-times"></i> ${file.name}: ${error.message}</div>`); }
@@ -183,73 +363,15 @@
         $('#progressArea').hide(); $('#uploadLog').hide().html(''); selectedFiles = []; $('#fileListInfo').text('');
     }
 
-    // --- 2. LOGIKA PETA & DETAIL POPUP DINAMIS ---
-    var map = L.map('map').setView([-7.629, 111.52], 13);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
-    var googleSat = L.tileLayer('http://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',{ maxZoom: 20, subdomains:['mt0','mt1','mt2','mt3'] });
-    L.control.layers({ "Peta Jalan": L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'), "Satelit": googleSat }).addTo(map);
-
-    var geoJsonLayer = L.geoJSON(null, {
-        style: function(f) { return { color: f.properties.color||'#3388ff', weight: 1, opacity: 1, fillOpacity: 0.4 }; },
-        onEachFeature: function(f, l) {
-            var props = f.properties;
-            var content = '';
-            
-            // LOGIKA DETAIL DINAMIS: Loop semua data raw
-            if (props.raw_data) {
-                var rows = '';
-                var raw = props.raw_data;
-                for (var key in raw) {
-                    if (raw.hasOwnProperty(key) && raw[key] !== null && raw[key] !== "") {
-                        // Abaikan kolom sistem/internal jika ada
-                        if(['the_geom', 'SHAPE_Leng', 'SHAPE_Area'].includes(key)) continue;
-                        rows += `<tr><td class="popup-key">${key}</td><td class="popup-val">${raw[key]}</td></tr>`;
-                    }
-                }
-                content = `
-                    <div style="min-width:250px; max-height:300px; overflow-y:auto;">
-                        <h6 class="text-primary font-weight-bold border-bottom pb-1 mb-2">${props.name}</h6>
-                        <table class="table table-sm table-striped popup-table mb-0"><tbody>${rows}</tbody></table>
-                    </div>`;
-            } else {
-                content = `<b>${props.name}</b><br><span class="badge badge-info">${props.type}</span><br>${props.description||'-'}`;
-            }
-            l.bindPopup(content);
-        }
-    }).addTo(map);
-
-    var abortController = null;
-    function loadData() {
-        if(map.getZoom() < 10) { geoJsonLayer.clearLayers(); $('#map-loading').hide(); return; }
-        $('#map-loading').show();
-        var b = map.getBounds();
-        var p = new URLSearchParams({ north:b.getNorth(), south:b.getSouth(), east:b.getEast(), west:b.getWest() });
-        
-        if(abortController) abortController.abort();
-        abortController = new AbortController();
-
-        fetch("{{ route('api.assets') }}?"+p, { signal: abortController.signal })
-            .then(r=>r.json()).then(d=>{
-                geoJsonLayer.clearLayers();
-                if(d.features) geoJsonLayer.addData(d);
-                $('#map-loading').hide();
-            }).catch(e=>{ if(e.name!=='AbortError') $('#map-loading').hide(); });
-    }
-    map.on('moveend', loadData);
-    loadData();
-
-    // Fitur Draw Manual
+    // Draw & Submit Manual
     var drawnItems = new L.FeatureGroup(); map.addLayer(drawnItems);
     var drawControl = new L.Control.Draw({ edit: { featureGroup: drawnItems }, draw: { polygon: true, polyline: false, rectangle: true, circle: false, marker: true } });
     map.addControl(drawControl);
-    
     map.on(L.Draw.Event.CREATED, function (e) {
         var layer = e.layer; $('#geometryData').val(JSON.stringify(layer.toGeoJSON().geometry));
         $('#inputDataModal').modal('show'); drawnItems.addLayer(layer);
     });
-    
     $('.cancel-draw').click(function() { drawnItems.clearLayers(); });
-    
     $('#formAset').submit(function(e){
         e.preventDefault();
         $.ajax({
@@ -259,7 +381,6 @@
             error: function() { Swal.fire('Gagal', 'Error server', 'error'); }
         });
     });
-    
     L.Control.geocoder().addTo(map);
 </script>
 @endpush
