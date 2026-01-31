@@ -31,14 +31,23 @@
     </a>
     <div class="sidebar">
       <nav class="mt-2">
-        <ul class="nav nav-pills nav-sidebar flex-column" data-widget="treeview" role="menu">
-          <li class="nav-item">
-            <a href="{{ route('dashboard') }}" class="nav-link {{ request()->routeIs('dashboard') ? 'active' : '' }}">
-              <i class="nav-icon fas fa-map-marked-alt"></i>
-              <p>Peta Utama</p>
-            </a>
-          </li>
-        </ul>
+        <ul class="nav nav-pills nav-sidebar flex-column" data-widget="treeview" role="menu" data-accordion="false">
+            
+            <li class="nav-item">
+                <a href="{{ route('dashboard') }}" class="nav-link {{ request()->routeIs('dashboard') ? 'active' : '' }}">
+                    <i class="nav-icon fas fa-map-marked-alt"></i>
+                    <p>Peta Sebaran</p>
+                </a>
+            </li>
+
+            <li class="nav-item">
+                <a href="{{ route('aset.index') }}" class="nav-link {{ request()->routeIs('aset.index') ? 'active' : '' }}">
+                    <i class="nav-icon fas fa-table"></i>
+                    <p>Data Aset</p>
+                </a>
+            </li>
+
+</ul>
       </nav>
     </div>
   </aside>
