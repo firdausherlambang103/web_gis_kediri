@@ -11,8 +11,8 @@
                 <h4 class="m-0 text-dark font-weight-bold">Database Aset</h4>
                 <small class="text-muted">Kelola data aset tanah dan bangunan</small>
             </div>
-            <a href="{{ route('dashboard') }}" class="btn btn-success shadow-sm">
-                <i class="fas fa-map-marked-alt mr-1"></i> Lihat di Peta
+            <a href="{{ route('dashboard', ['search' => request('search'), 'hak' => request('hak')]) }}" class="btn btn-success shadow-sm">
+                <i class="fas fa-map-marked-alt mr-1"></i> Lihat Hasil Filter di Peta
             </a>
         </div>
 
@@ -102,7 +102,7 @@
                                 <th>Jenis Hak</th>
                                 <th>Lokasi Aset</th>
                                 <th class="text-right">Luas (m²)</th>
-                                <th class="text-center">Tanggal Input</th>
+                                <th class="text-center" style="width: 100px;">Aksi</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -119,6 +119,14 @@
                                     $des = $raw['KELURAHAN'] ?? '-';
                                     $luas = $raw['LUASTERTUL'] ?? $raw['LUASPETA'] ?? 0;
                                     
+                                    // Hitung Koordinat untuk tombol peta (Dari ST_Centroid di Controller)
+                                    $lat = 0; $lng = 0;
+                                    if(isset($item->center)) {
+                                        $center = json_decode($item->center);
+                                        $lat = $center->coordinates[1] ?? 0;
+                                        $lng = $center->coordinates[0] ?? 0;
+                                    }
+
                                     // Logika Warna Badge Hak
                                     $hakColor = 'badge-secondary';
                                     if(stripos($hakItem, 'HM') !== false || stripos($hakItem, 'MILIK') !== false) $hakColor = 'badge-success';
@@ -148,8 +156,18 @@
                                     <td class="align-middle text-right font-weight-bold text-dark">
                                         {{ number_format((float)$luas, 0, ',', '.') }}
                                     </td>
-                                    <td class="align-middle text-center text-muted small">
-                                        <i class="far fa-calendar-alt mr-1"></i>{{ $item->created_at->format('d M Y') }}
+                                    <td class="align-middle text-center">
+                                        @if($lat != 0 && $lng != 0)
+                                            <a href="{{ route('dashboard', ['lat' => $lat, 'lng' => $lng, 'search' => $item->name]) }}" 
+                                               class="btn btn-sm btn-outline-success"
+                                               title="Lihat Lokasi di Peta">
+                                                <i class="fas fa-map-marker-alt"></i>
+                                            </a>
+                                        @else
+                                            <button class="btn btn-sm btn-outline-secondary" disabled title="Lokasi tidak tersedia">
+                                                <i class="fas fa-ban"></i>
+                                            </button>
+                                        @endif
                                     </td>
                                 </tr>
                             @empty

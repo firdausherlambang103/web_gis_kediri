@@ -12,10 +12,16 @@ class GisController extends Controller
 {
     /**
      * Halaman Utama Peta
+     * UPDATE: Menangkap parameter dari URL (lat, lng, search, hak) untuk fitur "Lihat di Peta"
      */
-    public function index()
+    public function index(Request $request)
     {
-        return view('admin.map');
+        $lat = $request->input('lat');
+        $lng = $request->input('lng');
+        $search = $request->input('search');
+        $hak = $request->input('hak');
+
+        return view('admin.map', compact('lat', 'lng', 'search', 'hak'));
     }
 
     /**
@@ -27,7 +33,7 @@ class GisController extends Controller
         $search = $request->input('search');
         $kecamatan = $request->input('kecamatan');
         $desa = $request->input('desa');
-        $hak = $request->input('hak'); // <--- Filter Baru (Tipe Hak)
+        $hak = $request->input('hak'); // Filter Baru (Tipe Hak)
 
         $query = SpatialFeature::query();
 
@@ -56,10 +62,14 @@ class GisController extends Controller
         }
 
         // 3. Eksekusi Query
-        $data = $query->select('id', 'name', 'properties', 'created_at')
-                      ->orderBy('id', 'desc')
-                      ->paginate(15)
-                      ->withQueryString(); // Agar parameter filter tetap ada saat pindah halaman
+        // UPDATE: Tambahkan 'ST_Centroid' agar kita dapat koordinat untuk tombol peta di tabel
+        $data = $query->select(
+            'id', 'name', 'properties', 'created_at',
+            DB::raw('ST_AsGeoJSON(ST_Centroid(geom)) as center')
+        )
+        ->orderBy('id', 'desc')
+        ->paginate(15)
+        ->withQueryString(); // Agar parameter filter tetap ada saat pindah halaman
 
         // 4. Return View dengan data filter
         return view('admin.aset.index', compact('data', 'search', 'kecamatan', 'desa', 'hak'));

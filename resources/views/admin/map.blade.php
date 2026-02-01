@@ -5,7 +5,6 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
     <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
-    
     <style>
         #map { height: 85vh; width: 100%; border: 1px solid #ced4da; border-radius: 4px; }
         
@@ -150,9 +149,25 @@
 <script>
     $(document).ready(function () { bsCustomFileInput.init(); });
 
-    // === 1. KONFIGURASI PETA ===
-    // Zoom control dipindah ke kanan bawah agar tidak tertutup panel filter
-    var map = L.map('map', { zoomControl: false }).setView([-7.8, 112.0], 12); 
+    // === 1. TANGKAP PARAMETER URL (Update Penting) ===
+    // Untuk membaca filter atau koordinat dari halaman tabel aset
+    const urlParams = new URLSearchParams(window.location.search);
+    const paramLat = urlParams.get('lat');
+    const paramLng = urlParams.get('lng');
+    const paramSearch = urlParams.get('search');
+    const paramHak = urlParams.get('hak');
+
+    // Isi Input Filter Otomatis
+    if(paramSearch) $('#searchMap').val(paramSearch);
+    if(paramHak) $('#filterHak').val(paramHak);
+
+    // === 2. KONFIGURASI PETA ===
+    // Tentukan titik awal: Jika ada parameter lat/lng, gunakan itu. Jika tidak, default Kediri.
+    var startLat = paramLat ? parseFloat(paramLat) : -7.8;
+    var startLng = paramLng ? parseFloat(paramLng) : 112.0;
+    var startZoom = paramLat ? 18 : 12; // Zoom dekat jika target spesifik
+
+    var map = L.map('map', { zoomControl: false }).setView([startLat, startLng], startZoom); 
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
     // Layer Satelit & Jalan
@@ -162,7 +177,13 @@
     osm.addTo(map); // Default OSM
     L.control.layers({ "Peta Jalan": osm, "Satelit": googleSat }, null, { position: 'bottomright' }).addTo(map);
 
-    // === 2. FUNGSI WARNA BERDASARKAN HAK ===
+    // Marker Sementara (Jika buka dari tabel)
+    if(paramLat && paramLng) {
+        L.marker([startLat, startLng]).addTo(map)
+            .bindPopup("<b>Lokasi Terpilih</b><br>" + (paramSearch || "")).openPopup();
+    }
+
+    // === 3. FUNGSI WARNA ===
     function getColorByHak(tipe) {
         if (!tipe) return '#3388ff'; // Default Biru
         tipe = tipe.toString().toUpperCase();
@@ -174,35 +195,28 @@
         return '#3388ff'; // Default
     }
 
-    var selectedLayer = null; // Simpan layer yg di-klik
+    var selectedLayer = null;
 
-    // === 3. LAYER GEOJSON UTAMA ===
+    // === 4. LAYER GEOJSON ===
     var geoJsonLayer = L.geoJSON(null, {
         
-        // Style Polygon (Warna Warni)
         style: function(feature) {
             var raw = feature.properties.raw_data || {};
-            // Ganti 'TIPE_HAK' dengan nama kolom asli di SHP Anda jika berbeda
             var tipe = raw.TIPE_HAK || raw.REMARK || raw.PENGGUNAAN; 
-            
             return {
                 color: getColorByHak(tipe),
                 fillColor: getColorByHak(tipe),
-                weight: 1,
-                opacity: 1,
-                fillOpacity: 0.5
+                weight: 1, opacity: 1, fillOpacity: 0.5
             };
         },
 
-        // Render Cluster Point
         pointToLayer: function(feature, latlng) {
             if (feature.properties.type === 'cluster') {
-                var count = feature.properties.count;
-                var size = count > 100 ? 40 : (count > 50 ? 30 : 25);
+                var size = feature.properties.count > 100 ? 40 : 30;
                 return L.marker(latlng, {
                     icon: L.divIcon({
                         className: 'cluster-marker',
-                        html: count,
+                        html: feature.properties.count,
                         iconSize: [size, size]
                     })
                 });
@@ -210,64 +224,39 @@
             return L.marker(latlng);
         },
 
-        // Interaksi Tiap Fitur
         onEachFeature: function(feature, layer) {
-            
-            // A. KLIK CLUSTER
             if (feature.properties.type === 'cluster') {
-                layer.bindPopup(`<b>Area Padat</b><br>${feature.properties.count} Aset.<br>Zoom in untuk detail.`);
+                layer.bindPopup(`<b>Area Padat</b><br>${feature.properties.count} Aset.<br>Zoom in.`);
                 layer.on('click', function() { map.flyTo(layer.getLatLng(), map.getZoom() + 2); });
-            } 
-            // B. KLIK POLYGON (HIGHLIGHT)
-            else {
+            } else {
                 layer.on('click', function(e) {
-                    // Reset layer sebelumnya
-                    if (selectedLayer) {
-                        geoJsonLayer.resetStyle(selectedLayer);
-                    }
-                    
-                    // Highlight layer yg diklik (ORANYE)
+                    if (selectedLayer) geoJsonLayer.resetStyle(selectedLayer);
                     selectedLayer = e.target;
-                    selectedLayer.setStyle({
-                        color: '#ff4500', // Border Oranye Merah
-                        fillColor: '#ffa500', // Isi Oranye
-                        weight: 3,
-                        fillOpacity: 0.8
-                    });
-                    
-                    if (!L.Browser.ie && !L.Browser.opera && !L.Browser.edge) {
-                        selectedLayer.bringToFront();
-                    }
+                    selectedLayer.setStyle({ color: '#ff4500', fillColor: '#ffa500', weight: 3, fillOpacity: 0.8 });
+                    selectedLayer.bringToFront();
                 });
 
-                // C. POPUP DETAIL DINAMIS
                 var props = feature.properties;
                 var raw = props.raw_data;
                 var rows = '';
-
                 if (raw) {
                     for (var key in raw) {
-                        // Filter kolom sistem
-                        if (raw.hasOwnProperty(key) && raw[key] && !['geometry','SHAPE_Leng','SHAPE_Area'].includes(key)) {
+                        if (raw.hasOwnProperty(key) && raw[key] && !['geometry','SHAPE_Leng'].includes(key)) {
                             rows += `<tr><td class="popup-key">${key}</td><td class="popup-val">${raw[key]}</td></tr>`;
                         }
                     }
                 }
-
                 var content = `
                     <div style="min-width:220px; max-height:250px; overflow-y:auto;">
-                        <h6 class="text-primary font-weight-bold border-bottom pb-2 mb-2">
-                            ${props.name}
-                        </h6>
+                        <h6 class="text-primary font-weight-bold border-bottom pb-2 mb-2">${props.name}</h6>
                         <table class="popup-table"><tbody>${rows}</tbody></table>
                     </div>`;
-                
                 layer.bindPopup(content);
             }
         }
     }).addTo(map);
 
-    // === 4. LOAD DATA (DARI SERVER) ===
+    // === 5. LOAD DATA ===
     var abortController = null;
 
     function loadData() {
@@ -296,26 +285,23 @@
                 if(data.features && data.features.length > 0) {
                     geoJsonLayer.addData(data);
                     
-                    // Notifikasi UI
-                    if(data.strategy === 'cluster') $('#loading-text').text("Mode Cluster (Zoom In untuk Detail)");
-                    else if(data.strategy === 'simplified') $('#loading-text').text("Mode Cepat (Simplified)");
+                    if(data.strategy === 'cluster') $('#loading-text').text("Mode Cluster");
+                    else if(data.strategy === 'simplified') $('#loading-text').text("Mode Cepat");
                     else $('#loading-text').text("Mode Detail");
                     
                     setTimeout(() => $('#map-loading').fadeOut(), 1000);
                 } else {
-                    $('#loading-text').text("Tidak ada data di area ini.");
-                    setTimeout(() => $('#map-loading').fadeOut(), 2000);
+                    $('#loading-text').text("Data Kosong");
+                    setTimeout(() => $('#map-loading').fadeOut(), 1500);
                 }
             })
-            .catch(err => {
-                if (err.name !== 'AbortError') $('#map-loading').fadeOut();
-            });
+            .catch(err => { if (err.name !== 'AbortError') $('#map-loading').fadeOut(); });
     }
 
     map.on('moveend', loadData);
-    loadData();
+    loadData(); // Load awal
 
-    // === 5. LOGIKA SMART UPLOAD ===
+    // === 6. UPLOAD LOGIC ===
     var selectedFiles = [];
     $('#shpFilesInput').on('change', function() {
         selectedFiles = Array.from($(this)[0].files);
