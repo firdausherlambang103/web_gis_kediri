@@ -1,202 +1,266 @@
 @extends('layouts.admin')
 
-@section('title', 'Data Aset Wilayah')
+@section('title', 'Data Aset Terdaftar')
 
 @section('content')
-<div class="row">
-    <div class="col-12">
+<div class="container-fluid">
+    <div class="card card-primary card-outline card-tabs shadow-sm">
         
-        <div class="mb-3 d-flex justify-content-between align-items-center">
-            <div>
-                <h4 class="m-0 text-dark font-weight-bold">Database Aset</h4>
-                <small class="text-muted">Kelola data aset tanah dan bangunan</small>
-            </div>
-            <a href="{{ route('dashboard', ['search' => request('search'), 'hak' => request('hak')]) }}" class="btn btn-success shadow-sm">
-                <i class="fas fa-map-marked-alt mr-1"></i> Lihat Hasil Filter di Peta
-            </a>
+        <div class="card-header p-0 pt-1 border-bottom-0">
+            <ul class="nav nav-tabs" id="custom-tabs-three-tab" role="tablist">
+                <li class="nav-item">
+                    <a class="nav-link {{ !$sumber ? 'active' : '' }}" href="{{ route('aset.index') }}">
+                        <i class="fas fa-layer-group mr-1"></i> Semua Data
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link {{ $sumber == 'manual' ? 'active' : '' }}" href="{{ route('aset.index', ['sumber' => 'manual']) }}">
+                        <i class="fas fa-pen-nib mr-1 text-warning"></i> Data Gambar Manual
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link {{ $sumber == 'import' ? 'active' : '' }}" href="{{ route('aset.index', ['sumber' => 'import']) }}">
+                        <i class="fas fa-file-import mr-1 text-success"></i> Data Import SHP
+                    </a>
+                </li>
+                
+                <li class="nav-item ml-auto mr-2 mt-1">
+                    <button type="button" class="btn btn-sm btn-success shadow-sm" data-toggle="modal" data-target="#modalImport">
+                        <i class="fas fa-file-upload mr-1"></i> Import SHP
+                    </button>
+                </li>
+            </ul>
         </div>
 
-        <div class="card card-outline card-primary shadow-sm">
-            <div class="card-header">
-                <h3 class="card-title"><i class="fas fa-filter mr-1"></i> Filter Pencarian</h3>
-                <div class="card-tools">
-                    <button type="button" class="btn btn-tool" data-card-widget="collapse">
-                        <i class="fas fa-minus"></i>
-                    </button>
-                </div>
-            </div>
-            <div class="card-body">
+        <div class="card-body bg-white">
+            
+            <div class="filter-box bg-light p-3 rounded mb-3 border">
                 <form method="GET" action="{{ route('aset.index') }}">
+                    <input type="hidden" name="sumber" value="{{ $sumber }}">
+
                     <div class="row">
-                        <div class="col-md-3">
-                            <div class="form-group">
-                                <label class="small text-muted font-weight-bold">Cari Nama / NIB</label>
-                                <div class="input-group input-group-sm">
-                                    <div class="input-group-prepend">
-                                        <span class="input-group-text bg-light"><i class="fas fa-search text-primary"></i></span>
-                                    </div>
-                                    <input type="text" name="search" class="form-control" value="{{ $search }}" placeholder="Contoh: Tanah Wakaf...">
+                        <div class="col-md-3 mb-2">
+                            <label class="small text-muted font-weight-bold">Cari Nama/NIB</label>
+                            <div class="input-group input-group-sm">
+                                <input type="text" name="search" class="form-control" placeholder="Contoh: Wakaf, 00809..." value="{{ $search }}">
+                                <div class="input-group-append">
+                                    <span class="input-group-text bg-white"><i class="fas fa-search text-primary"></i></span>
                                 </div>
                             </div>
                         </div>
-
-                        <div class="col-md-3">
-                            <div class="form-group">
-                                <label class="small text-muted font-weight-bold">Tipe Hak</label>
-                                <select name="hak" class="form-control form-control-sm">
-                                    <option value="">-- Semua Hak --</option>
-                                    <option value="HM" {{ $hak == 'HM' ? 'selected' : '' }}>Hak Milik (HM)</option>
-                                    <option value="HGB" {{ $hak == 'HGB' ? 'selected' : '' }}>Hak Guna Bangunan (HGB)</option>
-                                    <option value="HP" {{ $hak == 'HP' ? 'selected' : '' }}>Hak Pakai (HP)</option>
-                                    <option value="WAKAF" {{ $hak == 'WAKAF' ? 'selected' : '' }}>Tanah Wakaf</option>
-                                </select>
-                            </div>
+                        <div class="col-md-3 mb-2">
+                            <label class="small text-muted font-weight-bold">Filter Tipe Hak</label>
+                            <select name="hak" class="form-control form-control-sm">
+                                <option value="">-- Semua Hak --</option>
+                                <option value="HM" {{ $hak == 'HM' ? 'selected' : '' }}>Hak Milik (HM)</option>
+                                <option value="HGB" {{ $hak == 'HGB' ? 'selected' : '' }}>Hak Guna Bangunan (HGB)</option>
+                                <option value="HP" {{ $hak == 'HP' ? 'selected' : '' }}>Hak Pakai (HP)</option>
+                                <option value="WAKAF" {{ $hak == 'WAKAF' ? 'selected' : '' }}>Tanah Wakaf</option>
+                                <option value="KOSONG" {{ $hak == 'KOSONG' ? 'selected' : '' }}>Belum Ada Hak</option>
+                            </select>
                         </div>
-
-                        <div class="col-md-3">
-                            <div class="form-group">
-                                <label class="small text-muted font-weight-bold">Kecamatan</label>
-                                <input type="text" name="kecamatan" class="form-control form-control-sm" value="{{ $kecamatan }}" placeholder="Semua Kecamatan">
-                            </div>
+                        <div class="col-md-2 mb-2">
+                            <label class="small text-muted font-weight-bold">Kecamatan</label>
+                            <input type="text" name="kecamatan" class="form-control form-control-sm" placeholder="Kecamatan..." value="{{ $kecamatan }}">
                         </div>
-
-                        <div class="col-md-3">
-                            <div class="form-group">
-                                <label class="small text-muted font-weight-bold">Desa / Kelurahan</label>
-                                <input type="text" name="desa" class="form-control form-control-sm" value="{{ $desa }}" placeholder="Semua Desa">
-                            </div>
+                        <div class="col-md-2 mb-2">
+                            <label class="small text-muted font-weight-bold">Desa/Kelurahan</label>
+                            <input type="text" name="desa" class="form-control form-control-sm" placeholder="Desa..." value="{{ $desa }}">
                         </div>
-                    </div>
-                    
-                    <div class="row mt-2">
-                        <div class="col-12 text-right">
-                            <a href="{{ route('aset.index') }}" class="btn btn-default btn-sm mr-1">
-                                <i class="fas fa-sync-alt mr-1"></i> Reset
-                            </a>
-                            <button type="submit" class="btn btn-primary btn-sm px-4">
-                                <i class="fas fa-filter mr-1"></i> Terapkan Filter
+                        <div class="col-md-2 mb-2 d-flex align-items-end">
+                            <button type="submit" class="btn btn-sm btn-primary btn-block shadow-sm">
+                                <i class="fas fa-filter mr-1"></i> Terapkan
                             </button>
                         </div>
                     </div>
                 </form>
             </div>
-        </div>
 
-        <div class="card card-outline card-info shadow-sm">
-            <div class="card-header border-0">
-                <h3 class="card-title text-info">
-                    <i class="fas fa-list-ul mr-1"></i> Daftar Aset Terdaftar
-                </h3>
-                <div class="card-tools">
-                    <span class="badge badge-info px-2 py-1">{{ number_format($data->total()) }} Data</span>
-                </div>
-            </div>
+            <div class="table-responsive">
+                <table class="table table-hover table-striped text-nowrap border-bottom">
+                    <thead class="bg-primary text-white">
+                        <tr>
+                            <th style="width: 5%">No</th>
+                            <th style="width: 25%">Nama Aset / NIB</th>
+                            <th style="width: 15%">Tipe Hak</th>
+                            <th style="width: 20%">Lokasi Wilayah</th>
+                            <th style="width: 15%">Luas (m²)</th>
+                            <th style="width: 10%">Sumber</th>
+                            <th class="text-center" style="width: 10%">Aksi</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @forelse($data as $key => $item)
+                            @php
+                                $props = is_string($item->properties) ? json_decode($item->properties, true) : $item->properties;
+                                $raw = $props['raw_data'] ?? [];
+                                $type = $props['type'] ?? 'Imported';
 
-            <div class="card-body p-0">
-                <div class="table-responsive">
-                    <table class="table table-striped table-hover text-nowrap mb-0">
-                        <thead class="bg-light">
+                                $tipeHak = $raw['TIPEHAK'] ?? $raw['TIPE_HAK'] ?? $raw['tipehak'] ?? $raw['HAK'] ?? $raw['REMARK'] ?? '-';
+                                $desa = $raw['KELURAHAN'] ?? $raw['kelurahan'] ?? $raw['DESA'] ?? $raw['NAMOBJ'] ?? null;
+                                $kec  = $raw['KECAMATAN'] ?? $raw['kecamatan'] ?? $raw['WADMKC'] ?? null;
+                                
+                                $lokasi = '';
+                                if($desa) $lokasi .= 'Desa ' . $desa;
+                                if($desa && $kec) $lokasi .= '<br>';
+                                if($kec) $lokasi .= '<small class="text-muted"><i class="fas fa-map-marker-alt mr-1"></i>Kec. ' . $kec . '</small>';
+                                if(!$lokasi) $lokasi = '<span class="text-muted font-italic text-xs">Tidak ada data wilayah</span>';
+
+                                $luas = $raw['LUASTERTUL'] ?? $raw['LUAS'] ?? $raw['SHAPE_Area'] ?? 0;
+                                
+                                $badgeColor = 'badge-secondary';
+                                if(stripos($tipeHak, 'Milik') !== false || stripos($tipeHak, 'HM') !== false) $badgeColor = 'badge-success';
+                                elseif(stripos($tipeHak, 'Guna') !== false || stripos($tipeHak, 'HGB') !== false) $badgeColor = 'badge-warning';
+                                elseif(stripos($tipeHak, 'Pakai') !== false || stripos($tipeHak, 'HP') !== false) $badgeColor = 'badge-info';
+                                elseif(stripos($tipeHak, 'Wakaf') !== false) $badgeColor = 'badge-primary';
+                            @endphp
                             <tr>
-                                <th style="width: 50px" class="text-center">No</th>
-                                <th>Identitas Aset</th>
-                                <th>Jenis Hak</th>
-                                <th>Lokasi Aset</th>
-                                <th class="text-right">Luas (m²)</th>
-                                <th class="text-center" style="width: 100px;">Aksi</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @forelse($data as $key => $item)
-                                @php
-                                    $props = $item->properties;
-                                    $raw = $props['raw_data'] ?? [];
-                                    $type = $props['type'] ?? 'Manual';
-                                    
-                                    // Ambil Data Aman
-                                    $nib = $raw['NIB'] ?? '-';
-                                    $hakItem = $raw['TIPE_HAK'] ?? '-';
-                                    $kec = $raw['KECAMATAN'] ?? '-';
-                                    $des = $raw['KELURAHAN'] ?? '-';
-                                    $luas = $raw['LUASTERTUL'] ?? $raw['LUASPETA'] ?? 0;
-                                    
-                                    // Hitung Koordinat untuk tombol peta (Dari ST_Centroid di Controller)
-                                    $lat = 0; $lng = 0;
-                                    if(isset($item->center)) {
-                                        $center = json_decode($item->center);
-                                        $lat = $center->coordinates[1] ?? 0;
-                                        $lng = $center->coordinates[0] ?? 0;
-                                    }
-
-                                    // Logika Warna Badge Hak
-                                    $hakColor = 'badge-secondary';
-                                    if(stripos($hakItem, 'HM') !== false || stripos($hakItem, 'MILIK') !== false) $hakColor = 'badge-success';
-                                    elseif(stripos($hakItem, 'HGB') !== false) $hakColor = 'badge-warning';
-                                    elseif(stripos($hakItem, 'Pakai') !== false || stripos($hakItem, 'HP') !== false) $hakColor = 'badge-info';
-                                    elseif(stripos($hakItem, 'Wakaf') !== false) $hakColor = 'badge-primary';
-                                @endphp
-                                <tr>
-                                    <td class="text-center align-middle text-muted">{{ $data->firstItem() + $key }}</td>
-                                    <td class="align-middle">
-                                        <div class="font-weight-bold text-dark">{{ $item->name }}</div>
-                                        @if($nib != '-')
-                                            <small class="text-muted"><i class="fas fa-barcode mr-1"></i>{{ $nib }}</small>
-                                        @endif
-                                    </td>
-                                    <td class="align-middle">
-                                        @if($type == 'Imported')
-                                            <span class="badge {{ $hakColor }} px-2 py-1" style="font-weight: 500;">{{ $hakItem }}</span>
-                                        @else
-                                            <span class="badge badge-light border text-muted px-2 py-1">{{ $type }}</span>
-                                        @endif
-                                    </td>
-                                    <td class="align-middle">
-                                        <div class="text-dark"><i class="fas fa-map-marker-alt text-danger mr-1" style="font-size:10px;"></i> {{ $des }}</div>
-                                        <small class="text-muted pl-3">Kec. {{ $kec }}</small>
-                                    </td>
-                                    <td class="align-middle text-right font-weight-bold text-dark">
-                                        {{ number_format((float)$luas, 0, ',', '.') }}
-                                    </td>
-                                    <td class="align-middle text-center">
-                                        @if($lat != 0 && $lng != 0)
-                                            <a href="{{ route('dashboard', ['lat' => $lat, 'lng' => $lng, 'search' => $item->name]) }}" 
-                                               class="btn btn-sm btn-outline-success"
-                                               title="Lihat Lokasi di Peta">
-                                                <i class="fas fa-map-marker-alt"></i>
+                                <td>{{ $data->firstItem() + $key }}</td>
+                                <td>
+                                    <strong class="text-dark">{{ $item->name }}</strong>
+                                    @if(isset($raw['NIB']))
+                                        <br><small class="text-muted"><i class="fas fa-barcode mr-1"></i>NIB: {{ $raw['NIB'] }}</small>
+                                    @endif
+                                </td>
+                                <td>
+                                    <span class="badge {{ $badgeColor }} p-2 shadow-sm" style="font-size: 0.85em; font-weight: 500;">
+                                        {{ Str::limit($tipeHak, 20) }}
+                                    </span>
+                                </td>
+                                <td>{!! $lokasi !!}</td>
+                                <td class="font-weight-bold text-dark">
+                                    {{ number_format((float)$luas, 0, ',', '.') }} <small>m²</small>
+                                </td>
+                                <td>
+                                    @if($type == 'Manual')
+                                        <span class="badge badge-light border"><i class="fas fa-pen text-warning mr-1"></i> Manual</span>
+                                    @else
+                                        <span class="badge badge-light border"><i class="fas fa-file-import text-success mr-1"></i> Import</span>
+                                    @endif
+                                </td>
+                                <td class="text-center">
+                                    <div class="btn-group">
+                                        @if($item->center)
+                                            @php $geo = json_decode($item->center); $coords = $geo->coordinates; @endphp
+                                            <a href="{{ route('dashboard', ['lat' => $coords[1], 'lng' => $coords[0], 'search' => $item->name]) }}" target="_blank" class="btn btn-xs btn-outline-info" title="Lihat Peta">
+                                                <i class="fas fa-map-marked-alt"></i>
                                             </a>
-                                        @else
-                                            <button class="btn btn-sm btn-outline-secondary" disabled title="Lokasi tidak tersedia">
-                                                <i class="fas fa-ban"></i>
-                                            </button>
                                         @endif
-                                    </td>
-                                </tr>
-                            @empty
-                                <tr>
-                                    <td colspan="6" class="text-center py-5 text-muted">
-                                        <div class="py-4">
-                                            <i class="fas fa-folder-open fa-3x mb-3 text-light"></i><br>
-                                            <h5>Data tidak ditemukan</h5>
-                                            <p class="mb-0 small">Coba ubah filter pencarian Anda.</p>
-                                        </div>
-                                    </td>
-                                </tr>
-                            @endforelse
-                        </tbody>
-                    </table>
-                </div>
+                                        <button class="btn btn-xs btn-outline-warning" onclick="editAsset({{ $item->id }})" title="Edit">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                        <button class="btn btn-xs btn-outline-danger" onclick="deleteAsset({{ $item->id }})" title="Hapus">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        @empty
+                            <tr>
+                                <td colspan="7" class="text-center py-5 text-muted">
+                                    <div class="py-4">
+                                        <i class="fas fa-folder-open fa-3x mb-3 text-gray-300"></i>
+                                        <h5>Belum ada data aset yang ditemukan.</h5>
+                                    </div>
+                                </td>
+                            </tr>
+                        @endforelse
+                    </tbody>
+                </table>
             </div>
-
-            <div class="card-footer clearfix bg-white border-top">
-                <div class="d-flex justify-content-between align-items-center">
-                    <div class="text-muted small">
-                        Menampilkan {{ $data->firstItem() }} - {{ $data->lastItem() }} dari <b>{{ number_format($data->total()) }}</b> data
-                    </div>
-                    <div>
-                        {{ $data->links('pagination::bootstrap-4') }}
-                    </div>
+            
+            <div class="mt-3 d-flex justify-content-between align-items-center">
+                <div class="text-muted small">
+                    Total Data: <strong>{{ number_format($data->total()) }}</strong> Aset
                 </div>
+                <div>{{ $data->withQueryString()->links('pagination::bootstrap-4') }}</div>
             </div>
         </div>
     </div>
 </div>
+
+@include('admin.aset.partials.modals')
+
 @endsection
+
+@push('scripts')
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<script src="https://cdn.jsdelivr.net/npm/bs-custom-file-input/dist/bs-custom-file-input.min.js"></script>
+<script>
+    $(document).ready(function () { bsCustomFileInput.init(); });
+
+    // --- FUNGSI EDIT ---
+    function editAsset(id) {
+        // Fetch data
+        $.get('/asset/' + id, function(data) {
+            $('#editId').val(data.id);
+            $('#editName').val(data.name);
+            $('#editStatus').val(data.status); // Harus match value option
+            $('#editKec').val(data.kecamatan);
+            $('#editDesa').val(data.desa);
+            $('#editLuas').val(data.luas);
+            $('#editDesc').val(data.description);
+            $('#editColor').val(data.color);
+            
+            $('#modalEdit').modal('show');
+        }).fail(function() {
+            Swal.fire('Error', 'Gagal mengambil data', 'error');
+        });
+    }
+
+    // Submit Edit
+    $('#formEdit').submit(function(e) {
+        e.preventDefault();
+        var id = $('#editId').val();
+        
+        $.ajax({
+            url: '/asset/' + id,
+            type: 'PUT',
+            data: {
+                _token: '{{ csrf_token() }}',
+                name: $('#editName').val(),
+                status: $('#editStatus').val(),
+                kecamatan: $('#editKec').val(),
+                desa: $('#editDesa').val(),
+                luas: $('#editLuas').val(),
+                description: $('#editDesc').val(),
+                color: $('#editColor').val()
+            },
+            success: function(res) {
+                $('#modalEdit').modal('hide');
+                Swal.fire('Sukses', res.message, 'success').then(() => location.reload());
+            },
+            error: function(err) {
+                Swal.fire('Gagal', 'Terjadi kesalahan server', 'error');
+            }
+        });
+    });
+
+    // --- FUNGSI HAPUS ---
+    function deleteAsset(id) {
+        Swal.fire({
+            title: 'Yakin hapus data?',
+            text: "Data yang dihapus tidak bisa dikembalikan!",
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#d33',
+            cancelButtonColor: '#3085d6',
+            confirmButtonText: 'Ya, Hapus!'
+        }).then((result) => {
+            if (result.isConfirmed) {
+                $.ajax({
+                    url: '/asset/' + id,
+                    type: 'DELETE',
+                    data: { _token: '{{ csrf_token() }}' },
+                    success: function(res) {
+                        Swal.fire('Terhapus!', res.message, 'success').then(() => location.reload());
+                    },
+                    error: function() {
+                        Swal.fire('Gagal', 'Data gagal dihapus', 'error');
+                    }
+                });
+            }
+        })
+    }
+</script>
+@endpush

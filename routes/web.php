@@ -29,9 +29,13 @@ Route::controller(GisController::class)->group(function () {
     // 4. Proses Simpan & Upload
     Route::post('/asset/store-draw', 'storeDraw')->name('asset.storeDraw');
     Route::post('/asset/upload-shp', 'storeShp')->name('asset.uploadShp');
+
+    Route::get('/asset/{id}', 'show')->name('asset.show');       // Ambil detail data (untuk isi form edit)
+    Route::put('/asset/{id}', 'update')->name('asset.update');   // Simpan Perubahan
+    Route::delete('/asset/{id}', 'destroy')->name('asset.destroy'); // Hapus Data
 });
 
-// Group Route untuk Statistik (Menu Baru)
 Route::controller(StatisticController::class)->group(function () {
     Route::get('/statistics', 'index')->name('statistics.index');
+    Route::post('/statistics/run', 'runAnalysis')->name('statistics.run'); // Tombol update
 });

@@ -4,84 +4,160 @@
 
 @section('content')
 <div class="container-fluid">
-    <div class="card card-outline card-primary mb-3">
-        <div class="card-body py-2">
-            <form method="GET" action="{{ route('statistics.index') }}" class="form-inline justify-content-end">
-                <label class="mr-2 small">Filter Wilayah:</label>
-                <input type="text" name="kecamatan" class="form-control form-control-sm mr-2" placeholder="Kecamatan..." value="{{ $kecamatan }}">
-                <input type="text" name="desa" class="form-control form-control-sm mr-2" placeholder="Desa..." value="{{ $desa }}">
-                <button type="submit" class="btn btn-sm btn-primary"><i class="fas fa-filter"></i> Filter</button>
-            </form>
+    
+    <div class="row mb-3">
+        <div class="col-md-12">
+            <div class="card shadow-sm border-left-primary">
+                <div class="card-body p-3 d-flex align-items-center justify-content-between">
+                    <div>
+                        <h4 class="m-0 font-weight-bold text-primary">Dashboard Statistik</h4>
+                        <small class="text-muted">Analisis persebaran aset, tipe hak, dan tumpang tindih lahan.</small>
+                    </div>
+                    <form method="GET" action="{{ route('statistics.index') }}" class="form-inline">
+                        <div class="input-group mr-2">
+                            <div class="input-group-prepend">
+                                <span class="input-group-text bg-white"><i class="fas fa-map-marker-alt"></i></span>
+                            </div>
+                            <input type="text" name="kecamatan" class="form-control" placeholder="Kecamatan..." value="{{ $kecamatan }}">
+                        </div>
+                        <div class="input-group mr-2">
+                            <div class="input-group-prepend">
+                                <span class="input-group-text bg-white"><i class="fas fa-home"></i></span>
+                            </div>
+                            <input type="text" name="desa" class="form-control" placeholder="Desa..." value="{{ $desa }}">
+                        </div>
+                        <button type="submit" class="btn btn-primary shadow-sm"><i class="fas fa-filter mr-1"></i> Filter</button>
+                        <a href="{{ route('statistics.index') }}" class="btn btn-light border ml-2"><i class="fas fa-sync-alt"></i></a>
+                    </form>
+                </div>
+            </div>
         </div>
     </div>
 
     <div class="row">
-        <div class="col-md-6">
-            <div class="card card-warning">
+        <div class="col-12 col-sm-6 col-md-4">
+            <div class="info-box mb-3 shadow-sm p-3">
+                <span class="info-box-icon bg-success elevation-1"><i class="fas fa-ruler-combined"></i></span>
+                <div class="info-box-content">
+                    <span class="info-box-text text-muted">Total Luas Terpetakan</span>
+                    <span class="info-box-number display-4 text-success" style="font-size: 2rem;">
+                        {{ number_format($totalLuasTerpetakan, 2) }} <small>Ha</small>
+                    </span>
+                    <span class="progress-description text-xs text-muted">
+                        Berdasarkan data {{ $kecamatan ?: 'seluruh' }} {{ $desa }}
+                    </span>
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-sm-6 col-md-4">
+            <div class="info-box mb-3 shadow-sm p-3">
+                <span class="info-box-icon bg-primary elevation-1"><i class="fas fa-layer-group"></i></span>
+                <div class="info-box-content">
+                    <span class="info-box-text text-muted">Total Bidang Aset</span>
+                    <span class="info-box-number text-primary" style="font-size: 2rem;">
+                        {{ number_format($statsHak->sum('total')) }} <small>Bidang</small>
+                    </span>
+                    <span class="progress-description text-xs text-muted">
+                        Jumlah poligon yang tersimpan
+                    </span>
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-sm-6 col-md-4">
+            <div class="info-box mb-3 shadow-sm p-3">
+                <span class="info-box-icon bg-danger elevation-1"><i class="fas fa-exclamation-triangle"></i></span>
+                <div class="info-box-content">
+                    <span class="info-box-text text-muted">Potensi Tumpang Tindih</span>
+                    <span class="info-box-number text-danger" style="font-size: 2rem;">
+                        {{ number_format($overlaps->total()) }} <small>Kasus</small>
+                    </span>
+                    <span class="progress-description text-xs text-muted">
+                        Bidang yang saling beririsan
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-5">
+            <div class="card card-warning card-outline shadow h-100">
                 <div class="card-header">
-                    <h3 class="card-title"><i class="fas fa-chart-pie mr-1"></i> Distribusi Tipe Hak</h3>
+                    <h3 class="card-title font-weight-bold text-dark">
+                        <i class="fas fa-chart-pie mr-2 text-warning"></i>Proporsi Tipe Hak
+                    </h3>
                 </div>
                 <div class="card-body">
-                    <canvas id="chartHak" style="min-height: 250px; height: 250px; max-height: 250px; max-width: 100%;"></canvas>
+                    <div style="height: 350px;"> <canvas id="chartHak"></canvas>
+                    </div>
                 </div>
                 <div class="card-footer bg-white p-0">
-                    <ul class="nav flex-column">
-                        @foreach($statsHak as $s)
-                        <li class="nav-item border-bottom">
-                            <a href="#" class="nav-link text-muted small py-1">
-                                {{ $s->label }} <span class="float-right badge bg-primary">{{ number_format($s->total) }}</span>
-                            </a>
-                        </li>
-                        @endforeach
-                    </ul>
+                    <div class="table-responsive" style="max-height: 200px; overflow-y: auto;">
+                        <table class="table table-sm table-striped mb-0 text-sm">
+                            <thead>
+                                <tr>
+                                    <th>Tipe Hak</th>
+                                    <th class="text-right">Jumlah</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach($statsHak as $s)
+                                <tr>
+                                    <td><i class="fas fa-circle text-xs mr-2" style="color: #6c757d"></i>{{ $s->label }}</td>
+                                    <td class="text-right font-weight-bold">{{ number_format($s->total) }}</td>
+                                </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <div class="col-md-6">
-            <div class="card card-success">
+        <div class="col-md-7">
+            <div class="card card-success card-outline shadow h-100">
                 <div class="card-header">
-                    <h3 class="card-title"><i class="fas fa-chart-bar mr-1"></i> Top Desa Terpetakan (Hektar)</h3>
+                    <h3 class="card-title font-weight-bold text-dark">
+                        <i class="fas fa-chart-bar mr-2 text-success"></i>20 Desa dengan Aset Terluas
+                    </h3>
                 </div>
                 <div class="card-body">
-                    <canvas id="chartDesa" style="min-height: 250px; height: 250px; max-height: 250px; max-width: 100%;"></canvas>
-                </div>
-                <div class="card-footer small text-muted">
-                    Total Luas Terpetakan (Filtered): <b>{{ number_format($totalLuasTerpetakan, 2) }} Hektar</b>
-                </div>
-            </div>
-
-            <div class="card card-info mt-3">
-                <div class="card-header">
-                    <h3 class="card-title"><i class="fas fa-search-location mr-1"></i> Status Pemetaan</h3>
-                </div>
-                <div class="card-body text-center">
-                    <h1 class="display-4 text-info">{{ number_format($totalLuasTerpetakan, 1) }} Ha</h1>
-                    <p class="text-muted">Total Luas Aset Terpetakan (Sesuai Filter)</p>
-                    <div class="alert alert-light border small text-left">
-                        <i class="fas fa-info-circle"></i> <b>Catatan:</b> Untuk menghitung persentase "Belum Terpetakan" secara akurat, diperlukan data poligon batas wilayah resmi (Desa/Kecamatan) sebagai pembanding total luas wilayah.
+                    <div style="height: 400px;"> <canvas id="chartDesa"></canvas>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <div class="row">
+    <div class="row mt-4">
         <div class="col-12">
-            <div class="card card-danger card-outline">
-                <div class="card-header">
-                    <h3 class="card-title">
-                        <i class="fas fa-exclamation-triangle mr-1"></i> Analisis Tumpang Tindih (Overlap)
-                        @if(!$desa) <small class="text-danger ml-2">(Menampilkan 50 teratas, filter Desa untuk detail)</small> @endif
+            <div class="card card-danger card-outline shadow">
+                <div class="card-header border-0 d-flex justify-content-between align-items-center bg-white">
+                    <h3 class="card-title text-danger font-weight-bold">
+                        <i class="fas fa-exclamation-circle mr-2"></i>Detail Analisis Tumpang Tindih
                     </h3>
+                    
+                    <div>
+                        @if(isset($lastUpdate))
+                            <span class="badge badge-light border mr-2 p-2">
+                                <i class="far fa-clock mr-1"></i> Update: {{ \Carbon\Carbon::parse($lastUpdate)->diffForHumans() }}
+                            </span>
+                        @endif
+                        <form action="{{ route('statistics.run') }}" method="POST" style="display:inline">
+                            @csrf
+                            <button type="submit" class="btn btn-danger btn-sm shadow-sm" onclick="return confirm('Jalankan analisis ulang? Proses ini berjalan di background.')">
+                                <i class="fas fa-sync mr-1"></i> Update Analisis
+                            </button>
+                        </form>
+                    </div>
                 </div>
-                <div class="card-body p-0">
-                    <table class="table table-striped table-sm text-nowrap">
-                        <thead>
+                <div class="card-body p-0 table-responsive">
+                    <table class="table table-hover table-striped text-nowrap">
+                        <thead class="bg-light">
                             <tr>
-                                <th>Aset 1</th>
-                                <th>Aset 2</th>
-                                <th>Lokasi (Desa)</th>
+                                <th class="pl-4">Aset Pertama</th>
+                                <th>Aset Kedua (Overlap)</th>
+                                <th>Lokasi</th>
                                 <th class="text-right">Luas Overlap</th>
                                 <th class="text-center">Aksi</th>
                             </tr>
@@ -89,24 +165,43 @@
                         <tbody>
                             @forelse($overlaps as $ov)
                             <tr>
-                                <td class="text-primary font-weight-bold">{{ $ov->aset_1 }}</td>
-                                <td class="text-danger font-weight-bold">{{ $ov->aset_2 }}</td>
-                                <td>{{ $ov->desa ?? '-' }}</td>
-                                <td class="text-right">{{ number_format($ov->luas_tumpang_tindih, 2) }} m²</td>
-                                <td class="text-center">
-                                    <a href="{{ route('dashboard', ['search' => $ov->aset_1]) }}" target="_blank" class="btn btn-xs btn-outline-primary"><i class="fas fa-search"></i> Cek</a>
+                                <td class="pl-4 align-middle">
+                                    <div class="font-weight-bold text-primary">{{ $ov->aset_1 }}</div>
+                                    <small class="text-muted">ID: {{ $ov->id_1 }}</small>
+                                </td>
+                                <td class="align-middle">
+                                    <div class="font-weight-bold text-danger">{{ $ov->aset_2 }}</div>
+                                    <small class="text-muted">ID: {{ $ov->id_2 }}</small>
+                                </td>
+                                <td class="align-middle">
+                                    {{ $ov->desa }}<br>
+                                    <small class="text-muted">Kec. {{ $ov->kecamatan }}</small>
+                                </td>
+                                <td class="align-middle text-right font-weight-bold">
+                                    {{ number_format($ov->luas_overlap, 2) }} m²
+                                </td>
+                                <td class="align-middle text-center">
+                                    <a href="{{ route('dashboard', ['search' => $ov->aset_1]) }}" target="_blank" class="btn btn-xs btn-outline-info shadow-sm">
+                                        <i class="fas fa-search-location mr-1"></i> Cek Peta
+                                    </a>
                                 </td>
                             </tr>
                             @empty
                             <tr>
-                                <td colspan="5" class="text-center py-4 text-success">
-                                    <i class="fas fa-check-circle fa-2x mb-2"></i><br>
-                                    Tidak ditemukan tumpang tindih signifikan (>5m²) pada data ini.
+                                <td colspan="5" class="text-center py-5 text-muted">
+                                    <i class="fas fa-check-circle fa-3x text-success mb-3"></i>
+                                    <h5>Tidak ada data tumpang tindih.</h5>
+                                    <p>Data aset Anda aman atau analisis belum dijalankan.</p>
                                 </td>
                             </tr>
                             @endforelse
                         </tbody>
                     </table>
+                </div>
+                <div class="card-footer bg-white">
+                    <div class="float-right">
+                        {{ $overlaps->withQueryString()->links('pagination::bootstrap-4') }}
+                    </div>
                 </div>
             </div>
         </div>
@@ -117,44 +212,81 @@
 @push('scripts')
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-    // --- CHART TIPE HAK (PIE) ---
-    var ctxHak = document.getElementById('chartHak').getContext('2d');
-    var dataHak = @json($statsHak);
-    var labelsHak = dataHak.map(x => x.label);
-    var valuesHak = dataHak.map(x => x.total);
-    var colors = ['#f56954', '#00a65a', '#f39c12', '#00c0ef', '#3c8dbc', '#d2d6de', '#605ca8', '#ff851b'];
+    $(document).ready(function() {
+        // --- CHART TIPE HAK (DOUGHNUT BESAR) ---
+        var ctxHak = document.getElementById('chartHak').getContext('2d');
+        var dataHak = @json($statsHak);
+        
+        // Warna-warni cerah
+        var colors = ['#007bff', '#28a745', '#ffc107', '#dc3545', '#17a2b8', '#6610f2', '#e83e8c', '#fd7e14', '#6c757d'];
 
-    new Chart(ctxHak, {
-        type: 'doughnut',
-        data: {
-            labels: labelsHak,
-            datasets: [{
-                data: valuesHak,
-                backgroundColor: colors.slice(0, labelsHak.length)
-            }]
-        },
-        options: { maintainAspectRatio: false, responsive: true, plugins: { legend: { display: false } } }
-    });
+        new Chart(ctxHak, {
+            type: 'doughnut',
+            data: {
+                labels: dataHak.map(x => x.label),
+                datasets: [{
+                    data: dataHak.map(x => x.total),
+                    backgroundColor: colors,
+                    borderWidth: 2,
+                    hoverOffset: 10
+                }]
+            },
+            options: {
+                maintainAspectRatio: false, // Penting agar bisa di-resize
+                responsive: true,
+                plugins: {
+                    legend: {
+                        display: true,
+                        position: 'right', // Legenda di kanan agar rapi
+                        labels: { font: { size: 12 } }
+                    }
+                },
+                layout: { padding: 20 }
+            }
+        });
 
-    // --- CHART DESA (BAR) ---
-    var ctxDesa = document.getElementById('chartDesa').getContext('2d');
-    var dataDesa = @json($statsDesa);
-    
-    new Chart(ctxDesa, {
-        type: 'bar',
-        data: {
-            labels: dataDesa.map(x => x.desa),
-            datasets: [{
-                label: 'Luas (Hektar)',
-                data: dataDesa.map(x => x.luas_hektar),
-                backgroundColor: '#007bff'
-            }]
-        },
-        options: {
-            maintainAspectRatio: false,
-            responsive: true,
-            scales: { y: { beginAtZero: true } }
-        }
+        // --- CHART DESA (BAR HORIZONTAL AGAR NAMA DESA TERBACA) ---
+        var ctxDesa = document.getElementById('chartDesa').getContext('2d');
+        var dataDesa = @json($statsDesa);
+        
+        new Chart(ctxDesa, {
+            type: 'bar', // Gunakan bar chart
+            data: {
+                labels: dataDesa.map(x => x.desa),
+                datasets: [{
+                    label: 'Luas Aset (Hektar)',
+                    data: dataDesa.map(x => x.luas_hektar),
+                    backgroundColor: 'rgba(40, 167, 69, 0.7)',
+                    borderColor: '#28a745',
+                    borderWidth: 1,
+                    borderRadius: 4
+                }]
+            },
+            options: {
+                indexAxis: 'y', // MEMBUAT CHART HORIZONTAL (Lebih mudah baca nama desa panjang)
+                maintainAspectRatio: false,
+                responsive: true,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return context.raw.toLocaleString() + ' Hektar';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        beginAtZero: true,
+                        grid: { borderDash: [2, 2] }
+                    },
+                    y: {
+                        ticks: { font: { size: 11 } }
+                    }
+                }
+            }
+        });
     });
 </script>
 @endpush

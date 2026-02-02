@@ -3,78 +3,126 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use App\Models\SpatialFeature;
 use Illuminate\Support\Facades\DB;
+use App\Jobs\AnalyzeOverlapsJob;
 
 class StatisticController extends Controller
 {
     public function index(Request $request)
     {
-        // Filter Wilayah (Optional)
+        // 1. Set waktu eksekusi agar tidak timeout saat kalkulasi berat
+        set_time_limit(300); 
+
         $kecamatan = $request->input('kecamatan');
         $desa = $request->input('desa');
 
-        // 1. STATISTIK TIPE HAK
-        // Menggunakan operator ->> untuk mengambil teks dari JSONB di PostgreSQL
+        // ==================================================================================
+        // DEFINISI LOGIKA PENCARIAN (SQL EXPRESSION)
+        // Kita simpan string SQL ini ke variabel agar bisa dipakai di SELECT dan GROUP BY
+        // ==================================================================================
+
+        // Logic untuk mendeteksi Tipe Hak (Prioritas: TIPEHAK -> tipehak -> TIPE_HAK -> HAK)
+        $hakExpression = "
+            COALESCE(
+                NULLIF(properties->'raw_data'->>'TIPEHAK', ''), 
+                NULLIF(properties->'raw_data'->>'tipehak', ''), 
+                NULLIF(properties->'raw_data'->>'TIPE_HAK', ''), 
+                NULLIF(properties->'raw_data'->>'HAK', ''), 
+                NULLIF(properties->'raw_data'->>'hak', ''), 
+                NULLIF(properties->'raw_data'->>'STATUS', ''), 
+                'BELUM ADA HAK'
+            )
+        ";
+
+        // Logic untuk mendeteksi Nama Desa/Kelurahan (Prioritas: KELURAHAN -> kelurahan -> DESA)
+        $desaExpression = "
+            COALESCE(
+                NULLIF(properties->'raw_data'->>'KELURAHAN', ''),
+                NULLIF(properties->'raw_data'->>'kelurahan', ''), 
+                NULLIF(properties->'raw_data'->>'DESA', ''),
+                NULLIF(properties->'raw_data'->>'desa', ''),
+                NULLIF(properties->'raw_data'->>'NAMOBJ', ''),
+                NULLIF(properties->'raw_data'->>'WADMKD', ''), 
+                'Tanpa Desa'
+            )
+        ";
+
+        // ==================================================================================
+        // 2. QUERY STATISTIK TIPE HAK
+        // ==================================================================================
         $queryHak = DB::table('spatial_features')
             ->select(
-                DB::raw("COALESCE(NULLIF(properties->'raw_data'->>'TIPE_HAK', ''), 'BELUM ADA HAK') as label"),
+                DB::raw("$hakExpression as label"),
                 DB::raw("COUNT(*) as total"),
                 DB::raw("SUM(ST_Area(geom::geography)) as luas_m2")
             );
 
-        if ($kecamatan) $queryHak->whereRaw("properties->'raw_data'->>'KECAMATAN' ILIKE ?", ['%'.$kecamatan.'%']);
-        if ($desa) $queryHak->whereRaw("properties->'raw_data'->>'KELURAHAN' ILIKE ?", ['%'.$desa.'%']);
-
-        $statsHak = $queryHak->groupBy('label')->orderBy('total', 'desc')->get();
-
-        // 2. STATISTIK PER DESA
-        $queryDesa = DB::table('spatial_features')
-            ->select(
-                DB::raw("properties->'raw_data'->>'KELURAHAN' as desa"),
-                DB::raw("COUNT(*) as total_bidang"),
-                DB::raw("SUM(ST_Area(geom::geography)) / 10000 as luas_hektar")
-            )
-            ->whereNotNull(DB::raw("properties->'raw_data'->>'KELURAHAN'"));
-
-        if ($kecamatan) $queryDesa->whereRaw("properties->'raw_data'->>'KECAMATAN' ILIKE ?", ['%'.$kecamatan.'%']);
-        
-        $statsDesa = $queryDesa->groupBy('desa')->orderBy('total_bidang', 'desc')->limit(20)->get();
-
-        // 3. ANALISIS TUMPANG TINDIH (FIXED POSTGRESQL SYNTAX)
-        $overlapQuery = DB::table('spatial_features as a')
-            ->join('spatial_features as b', function($join) {
-                // PERBAIKAN 1: Gunakan whereRaw untuk kondisi boolean ST_Intersects
-                // Jangan gunakan on(..., '>', 0) karena return value-nya boolean
-                $join->whereRaw('ST_Intersects(a.geom, b.geom)')
-                     ->on('a.id', '<', 'b.id'); // Mencegah duplikasi (A-B dan B-A)
-            })
-            ->select(
-                'a.name as aset_1',
-                'b.name as aset_2',
-                'a.id as id_1',
-                'b.id as id_2',
-                // PERBAIKAN 2: Tambahkan prefix 'a.' untuk menghindari ambiguitas
-                DB::raw("a.properties->'raw_data'->>'KELURAHAN' as desa"),
-                DB::raw("ST_Area(ST_Intersection(a.geom, b.geom)::geography) as luas_tumpang_tindih")
-            )
-            // Filter hanya overlap yang signifikan (> 5 m2)
-            ->whereRaw("ST_Area(ST_Intersection(a.geom, b.geom)::geography) > 5");
-
+        // Filter Wilayah (Cari text global agar aman dari perbedaan key KECAMATAN vs WADMKC)
+        if ($kecamatan) {
+            $queryHak->whereRaw("properties::text ILIKE ?", ['%' . $kecamatan . '%']);
+        }
         if ($desa) {
-            // PERBAIKAN 3: Gunakan ILIKE untuk case-insensitive search
-            $overlapQuery->whereRaw("a.properties->'raw_data'->>'KELURAHAN' ILIKE ?", ['%'.$desa.'%']);
-        } else {
-            $overlapQuery->limit(50);
+            $queryHak->whereRaw("properties::text ILIKE ?", ['%' . $desa . '%']);
         }
 
-        $overlaps = $overlapQuery->orderBy('luas_tumpang_tindih', 'desc')->get();
+        // GROUP BY wajib menggunakan raw expression yang sama persis dengan SELECT di Postgres
+        $statsHak = $queryHak
+            ->groupBy(DB::raw($hakExpression))
+            ->orderBy('total', 'desc')
+            ->get();
 
-        // 4. TOTAL LUAS TERPETAKAN
-        $totalLuasTerpetakan = $statsHak->sum('luas_m2') / 10000; // Dalam Hektar
+        // ==================================================================================
+        // 3. QUERY STATISTIK PER DESA
+        // ==================================================================================
+        $queryDesa = DB::table('spatial_features')
+            ->select(
+                DB::raw("$desaExpression as desa"),
+                DB::raw("COUNT(*) as total_bidang"),
+                DB::raw("SUM(ST_Area(geom::geography)) / 10000 as luas_hektar")
+            );
+
+        // Filter Kecamatan
+        if ($kecamatan) {
+            $queryDesa->whereRaw("properties::text ILIKE ?", ['%' . $kecamatan . '%']);
+        }
+        
+        // GROUP BY & HAVING
+        $statsDesa = $queryDesa
+            ->groupBy(DB::raw($desaExpression))
+            ->havingRaw("$desaExpression != 'Tanpa Desa'")
+            ->orderBy('total_bidang', 'desc')
+            ->limit(20)
+            ->get();
+
+        // ==================================================================================
+        // 4. ANALISIS TUMPANG TINDIH (BACA DARI TABEL HASIL JOB)
+        // ==================================================================================
+        $overlapQuery = DB::table('overlap_results');
+
+        if ($desa) {
+            $overlapQuery->where('desa', 'ILIKE', '%' . $desa . '%');
+        }
+        if ($kecamatan) {
+            $overlapQuery->where('kecamatan', 'ILIKE', '%' . $kecamatan . '%');
+        }
+        
+        $overlaps = $overlapQuery->orderBy('luas_overlap', 'desc')->paginate(50); 
+
+        // Info Update Terakhir
+        $lastUpdate = DB::table('overlap_results')->latest('created_at')->value('created_at');
+        
+        // Total Luas Terpetakan
+        $totalLuasTerpetakan = $statsHak->sum('luas_m2') / 10000; 
 
         return view('admin.statistic.index', compact(
-            'statsHak', 'statsDesa', 'overlaps', 'totalLuasTerpetakan', 'kecamatan', 'desa'
+            'statsHak', 'statsDesa', 'overlaps', 'totalLuasTerpetakan', 'kecamatan', 'desa', 'lastUpdate'
         ));
+    }
+
+    // Trigger Job Background
+    public function runAnalysis()
+    {
+        AnalyzeOverlapsJob::dispatch();
+        return back()->with('success', 'Analisis sedang berjalan di background. Mohon tunggu beberapa saat dan refresh halaman.');
     }
 }
