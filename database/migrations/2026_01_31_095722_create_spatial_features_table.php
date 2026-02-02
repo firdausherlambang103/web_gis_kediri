@@ -10,12 +10,18 @@ return new class extends Migration
     {
         Schema::create('spatial_features', function (Blueprint $table) {
             $table->id();
-            $table->string('name')->nullable();
-            $table->json('properties')->nullable();
-            $table->geometry('geom'); // Membutuhkan MySQL 8+ atau MariaDB 10.2+
-            $table->timestamps();
             
-            $table->spatialIndex('geom');
+            // Index nama agar pencarian cepat
+            $table->string('name')->index(); 
+            
+            // Gunakan JSONB (Binary JSON) untuk performa tinggi di PostgreSQL
+            $table->jsonb('properties')->nullable(); 
+            
+            // Definisi Geometri PostGIS (Tipe Geometry, SRID 4326/WGS84)
+            // Ini akan membuat kolom geometry fisik, bukan sekadar text
+            $table->geometry('geom', 'geometry', 4326)->spatialIndex(); 
+            
+            $table->timestamps();
         });
     }
 

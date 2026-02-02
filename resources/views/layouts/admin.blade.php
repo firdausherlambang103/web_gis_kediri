@@ -47,6 +47,13 @@
                 </a>
             </li>
 
+            <li class="nav-item">
+                <a href="{{ route('statistics.index') }}" class="nav-link {{ request()->routeIs('statistics.index') ? 'active' : '' }}">
+                    <i class="nav-icon fas fa-chart-pie"></i>
+                    <p>Statistik & Analisis</p>
+                </a>
+            </li>
+
 </ul>
       </nav>
     </div>
