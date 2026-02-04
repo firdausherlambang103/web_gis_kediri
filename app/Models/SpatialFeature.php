@@ -21,4 +21,9 @@ class SpatialFeature extends Model
             DB::raw('ST_AsGeoJSON(geom) as geometry') 
         );
     }
+
+    public function layer()
+    {
+        return $this->belongsTo(Layer::class);
+    }
 }

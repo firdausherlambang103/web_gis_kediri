@@ -7,28 +7,42 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css" />
     <style>
         #map { height: calc(100vh - 57px); width: 100%; border: 1px solid #ced4da; }
+        
         #map-loading {
             position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
             z-index: 2000; background: rgba(255, 255, 255, 0.95); padding: 15px 30px;
             border-radius: 50px; font-weight: bold; display: none; 
             box-shadow: 0 4px 15px rgba(0,0,0,0.2); color: #333;
         }
+
+        /* Filter Box (Kiri Atas) */
         .map-filter-box {
             position: absolute; top: 10px; right: 10px; z-index: 1000;
             background: rgba(255, 255, 255, 0.95); padding: 15px; border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.2); width: 280px;
             backdrop-filter: blur(5px);
         }
+
+        /* Layer Control (Kanan Atas - Bawah Filter) */
+        .layer-control-box {
+            position: absolute; top: 280px; right: 10px; z-index: 1000;
+            background: rgba(255, 255, 255, 0.95); padding: 10px; border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2); width: 280px; 
+            max-height: 300px; overflow-y: auto;
+            backdrop-filter: blur(5px);
+        }
+
         .cluster-marker {
             background-color: rgba(220, 53, 69, 0.85);
             border: 3px solid white; border-radius: 50%;
             color: white; font-weight: bold; text-align: center;
             line-height: 30px; box-shadow: 0 3px 5px rgba(0,0,0,0.3);
         }
+
         .popup-table { width: 100%; font-size: 12px; margin-top: 5px; margin-bottom: 10px; }
         .popup-table td { padding: 4px 6px; border-bottom: 1px solid #f0f0f0; vertical-align: top; }
         .bg-label { background-color: #f8f9fa; font-weight: 600; color: #555; width: 40%; }
-        /* Upload Progress */
+        
         .progress-group { display: none; margin-top: 15px; }
         .upload-log { max-height: 100px; overflow-y: auto; font-size: 0.85rem; margin-top: 10px; border: 1px solid #ddd; padding: 5px; background: #f9f9f9; }
     </style>
@@ -41,7 +55,7 @@
     </div>
 
     <div class="map-filter-box">
-        <h6 class="font-weight-bold mb-3"><i class="fas fa-layer-group text-primary"></i> Filter Peta</h6>
+        <h6 class="font-weight-bold mb-3"><i class="fas fa-search text-primary"></i> Filter Peta</h6>
         <div class="form-group mb-2">
             <label class="small mb-1">Pencarian (Nama/NIB)</label>
             <div class="input-group input-group-sm">
@@ -71,7 +85,53 @@
         </button>
     </div>
 
+    <div class="layer-control-box">
+        <h6 class="font-weight-bold mb-2"><i class="fas fa-layer-group text-primary"></i> Layer Aktif</h6>
+        <div id="layerList" class="mb-2">
+            @forelse($layers as $layer)
+            <div class="custom-control custom-checkbox mb-1">
+                <input type="checkbox" class="custom-control-input layer-checkbox" 
+                       id="layer_{{ $layer->id }}" value="{{ $layer->id }}" checked
+                       data-color="{{ $layer->color }}">
+                <label class="custom-control-label small" for="layer_{{ $layer->id }}">
+                    <span class="badge badge-dot mr-1" style="background-color: {{ $layer->color }}; width: 10px; height: 10px; display: inline-block; border-radius: 50%;"></span>
+                    {{ $layer->name }}
+                </label>
+            </div>
+            @empty
+                <p class="text-muted small">Belum ada layer.</p>
+            @endforelse
+        </div>
+        <button class="btn btn-xs btn-outline-primary btn-block" data-toggle="modal" data-target="#modalAddLayer">
+            <i class="fas fa-plus mr-1"></i> Buat Layer Baru
+        </button>
+    </div>
+
     <div id="map"></div>
+</div>
+
+<div class="modal fade" id="modalAddLayer">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Layer Baru</h5>
+                <button type="button" class="close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Nama Layer</label>
+                    <input type="text" id="newLayerName" class="form-control" placeholder="Misal: Jalan, Sungai...">
+                </div>
+                <div class="form-group">
+                    <label>Warna Default</label>
+                    <input type="color" id="newLayerColor" class="form-control" value="#3388ff">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary btn-block" onclick="createNewLayer()">Simpan</button>
+            </div>
+        </div>
+    </div>
 </div>
 
 <div class="modal fade" id="modalDraw" tabindex="-1" role="dialog" data-backdrop="static">
@@ -84,6 +144,17 @@
             <div class="modal-body">
                 <form id="formDraw">
                     <input type="hidden" id="drawGeometry">
+                    
+                    <div class="form-group">
+                        <label>Layer Tujuan</label>
+                        <select id="drawLayerId" class="form-control">
+                            <option value="">-- Tanpa Layer (Default) --</option>
+                            @foreach($layers as $layer)
+                                <option value="{{ $layer->id }}">{{ $layer->name }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+
                     <div class="form-group">
                         <label>Nama Aset / Bidang <span class="text-danger">*</span></label>
                         <input type="text" id="drawName" class="form-control" placeholder="Contoh: Tanah Wakaf Masjid..." required>
@@ -142,11 +213,27 @@
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
-                <h4 class="modal-title">Batch Upload SHP</h4>
+                <h4 class="modal-title">Upload SHP ke Layer</h4>
                 <button type="button" class="close" onclick="resetUploadModal()" data-dismiss="modal">&times;</button>
             </div>
             <div class="modal-body">
-                <div class="alert alert-info small"><i class="fas fa-info-circle"></i> Pilih banyak file <b>.zip</b> sekaligus.</div>
+                
+                <div class="form-group">
+                    <label>Pilih Layer Tujuan <span class="text-danger">*</span></label>
+                    <div class="input-group">
+                        <select id="uploadLayerSelect" class="form-control">
+                            <option value="">-- Pilih Layer --</option>
+                            @foreach($layers as $layer)
+                                <option value="{{ $layer->id }}">{{ $layer->name }}</option>
+                            @endforeach
+                        </select>
+                        <div class="input-group-append">
+                            <button class="btn btn-outline-secondary" type="button" data-toggle="modal" data-target="#modalAddLayer"><i class="fas fa-plus"></i></button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="alert alert-info small mt-2"><i class="fas fa-info-circle"></i> Pilih banyak file <b>.zip</b> sekaligus.</div>
                 <div class="form-group">
                     <div class="custom-file">
                         <input type="file" class="custom-file-input" id="shpFilesInput" accept=".zip" multiple>
@@ -214,7 +301,31 @@
         L.marker([startLat, startLng]).addTo(map).bindPopup("<b>Lokasi Terpilih</b><br>" + (paramSearch || "")).openPopup();
     }
 
-    // === 3. GAMBAR MANUAL ===
+    // === 3. MANAJEMEN LAYER ===
+    
+    // a. Buat Layer Baru
+    function createNewLayer() {
+        var name = $('#newLayerName').val();
+        var color = $('#newLayerColor').val();
+        
+        if(!name) { Swal.fire('Error', 'Nama Layer wajib diisi', 'error'); return; }
+
+        $.post("{{ route('layer.store') }}", {
+            _token: "{{ csrf_token() }}", name: name, color: color
+        }, function(res) {
+            $('#modalAddLayer').modal('hide');
+            Swal.fire('Sukses', 'Layer berhasil dibuat', 'success').then(() => location.reload());
+        }).fail(function() {
+            Swal.fire('Gagal', 'Terjadi kesalahan', 'error');
+        });
+    }
+
+    // b. Filter Layer Checkbox
+    $('.layer-checkbox').change(function() {
+        loadData(); // Reload peta saat layer dicentang/uncentang
+    });
+
+    // === 4. GAMBAR MANUAL ===
     var drawnItems = new L.FeatureGroup(); map.addLayer(drawnItems);
     var drawControl = new L.Control.Draw({ edit: { featureGroup: drawnItems }, draw: { polygon: true, rectangle: true, marker: true, circle: false, polyline: false, circlemarker: false } });
     map.addControl(drawControl);
@@ -242,8 +353,10 @@
         $.ajax({
             url: "{{ route('asset.storeDraw') }}", type: "POST",
             data: {
-                _token: "{{ csrf_token() }}", name: name, status: status, color: $('#drawColor').val(),
-                kecamatan: $('#drawKec').val(), desa: $('#drawDesa').val(), description: $('#drawDesc').val(), geometry: $('#drawGeometry').val()
+                _token: "{{ csrf_token() }}", name: name, status: status, 
+                color: $('#drawColor').val(), layer_id: $('#drawLayerId').val(), // Kirim Layer ID
+                kecamatan: $('#drawKec').val(), desa: $('#drawDesa').val(), 
+                description: $('#drawDesc').val(), geometry: $('#drawGeometry').val()
             },
             success: function(res) {
                 $('#map-loading').fadeOut(); Swal.fire('Berhasil', res.message, 'success');
@@ -253,25 +366,32 @@
         });
     }
 
-    // === 4. LOAD DATA & POPUP (Dengan Tombol Edit/Delete) ===
-    function getColorByHak(tipe, customColor) {
-        if (customColor) return customColor;
-        if (!tipe) return '#6c757d'; 
+    // === 5. LOAD DATA & VISUALISASI ===
+    
+    // Fungsi warna diperbarui untuk mendukung Warna Layer
+    function getColor(props) {
+        // 1. Cek jika ada warna manual di properti
+        if (props.color && props.color !== '#ff0000') return props.color;
+        
+        // 2. Cek warna dari layer (jika ada)
+        if (props.layer_color) return props.layer_color;
+
+        // 3. Fallback ke warna tipe hak (Logic lama)
+        var raw = props.raw_data || {};
+        var tipe = raw.TIPEHAK || raw.TIPE_HAK || 'Import';
         tipe = tipe.toString().toUpperCase();
-        if (tipe.includes('HM') || tipe.includes('MILIK')) return '#28a745'; 
-        if (tipe.includes('HGB') || tipe.includes('BANGUNAN')) return '#ffc107'; 
-        if (tipe.includes('HP') || tipe.includes('PAKAI')) return '#17a2b8'; 
-        if (tipe.includes('WAKAF')) return '#6f42c1'; 
-        return '#3388ff'; 
+        
+        if (tipe.includes('HM') || tipe.includes('MILIK')) return '#28a745';
+        if (tipe.includes('HGB') || tipe.includes('BANGUNAN')) return '#ffc107';
+        if (tipe.includes('HP') || tipe.includes('PAKAI')) return '#17a2b8';
+        if (tipe.includes('WAKAF')) return '#6f42c1';
+        return '#3388ff';
     }
 
     var selectedLayer = null;
     var geoJsonLayer = L.geoJSON(null, {
         style: function(feature) {
-            var props = feature.properties || {};
-            var raw = props.raw_data || {};
-            var tipe = raw.TIPEHAK || raw.TIPE_HAK || raw.REMARK || 'Import';
-            var col = getColorByHak(tipe, props.color);
+            var col = getColor(feature.properties || {});
             return { color: col, fillColor: col, weight: 1, opacity: 1, fillOpacity: 0.5 };
         },
         pointToLayer: function(feature, latlng) {
@@ -324,11 +444,20 @@
     var abortController = null;
     function loadData() {
         $('#map-loading').fadeIn(); $('#loading-text').text("Memuat Data...");
+        
+        // Ambil Layer yang dicentang
+        var selectedLayers = [];
+        $('.layer-checkbox:checked').each(function() { selectedLayers.push($(this).val()); });
+
         var params = new URLSearchParams({
             north: map.getBounds().getNorth(), south: map.getBounds().getSouth(),
             east: map.getBounds().getEast(), west: map.getBounds().getWest(),
             zoom: map.getZoom(), search: $('#searchMap').val(), hak: $('#filterHak').val()
         });
+
+        // Append array layer ke URL (Manual karena URLSearchParams tidak support array PHP style)
+        selectedLayers.forEach(id => params.append('layers[]', id));
+
         if (abortController) abortController.abort();
         abortController = new AbortController();
 
@@ -348,23 +477,32 @@
     }
     map.on('moveend', loadData); loadData();
 
-    // === 5. UPLOAD LOGIC ===
-    // (Sama seperti sebelumnya)
+    // === 6. UPLOAD LOGIC (Dengan Layer) ===
     var selectedFiles = [];
     $('#shpFilesInput').on('change', function() {
         selectedFiles = Array.from($(this)[0].files);
         $(this).next('.custom-file-label').html(selectedFiles.length > 0 ? selectedFiles.length + ' file dipilih' : 'Pilih file...');
     });
+
     async function startBatchUpload() {
+        var layerId = $('#uploadLayerSelect').val();
+        if(!layerId) { Swal.fire('Error', 'Pilih Layer Tujuan dulu!', 'error'); return; }
+        
         if (selectedFiles.length === 0) { Swal.fire('Warning', 'Pilih file dulu!', 'warning'); return; }
+        
         $('#btnStartUpload').prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Memproses...');
         $('#progressArea').show(); $('#uploadLog').show().html('');
+        
         let successCount = 0; let failCount = 0;
         for (let i = 0; i < selectedFiles.length; i++) {
             let file = selectedFiles[i];
             let percent = Math.round(((i) / selectedFiles.length) * 100);
             $('#progressBar').css('width', percent + '%'); $('#progressText').text(`Proses ${i+1}/${selectedFiles.length}`); $('#progressPercent').text(percent + '%');
-            let formData = new FormData(); formData.append('shp_files[]', file);
+            
+            let formData = new FormData(); 
+            formData.append('shp_files[]', file);
+            formData.append('layer_id', layerId); // KIRIM LAYER ID
+
             try {
                 let response = await fetch("{{ route('asset.uploadShp') }}", { method: 'POST', headers: { 'X-CSRF-TOKEN': '{{ csrf_token() }}', 'Accept': 'application/json' }, body: formData });
                 let result = await response.json();
@@ -376,12 +514,13 @@
         $('#btnStartUpload').html('Selesai').removeClass('btn-success').addClass('btn-secondary');
         loadData(); Swal.fire({ title: 'Selesai', text: `Berhasil: ${successCount}, Gagal: ${failCount}`, icon: failCount === 0 ? 'success' : 'warning' });
     }
+    
     function resetUploadModal() {
         $('#btnStartUpload').prop('disabled', false).html('<i class="fas fa-upload"></i> Mulai Upload').addClass('btn-success').removeClass('btn-secondary');
         $('#progressArea').hide(); $('#uploadLog').hide().html(''); selectedFiles = [];
     }
 
-    // === 6. FUNGSI EDIT & DELETE UNTUK PETA ===
+    // === 7. FUNGSI EDIT & DELETE (Integrasi dari kode sebelumnya) ===
     function editAsset(id) {
         $.get('/asset/' + id, function(data) {
             $('#editId').val(data.id);
@@ -406,7 +545,7 @@
                 kecamatan: $('#editKec').val(), desa: $('#editDesa').val(), luas: $('#editLuas').val(), description: $('#editDesc').val(), color: $('#editColor').val()
             },
             success: function(res) {
-                $('#modalEdit').modal('hide'); Swal.fire('Sukses', res.message, 'success'); loadData(); // Refresh Peta tanpa reload
+                $('#modalEdit').modal('hide'); Swal.fire('Sukses', res.message, 'success'); loadData();
             },
             error: function(err) { Swal.fire('Gagal', 'Terjadi kesalahan server', 'error'); }
         });

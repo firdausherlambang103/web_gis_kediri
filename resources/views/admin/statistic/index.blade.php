@@ -130,11 +130,60 @@
     </div>
 
     <div class="row mt-4">
-        <div class="col-12">
+        <div class="col-md-12">
             <div class="card card-danger card-outline shadow">
+                <div class="card-header">
+                    <h3 class="card-title font-weight-bold text-danger">
+                        <i class="fas fa-fire mr-2"></i>10 Desa dengan Kasus Tumpang Tindih Terbanyak
+                    </h3>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover mb-0">
+                            <thead class="bg-light">
+                                <tr>
+                                    <th class="pl-4" style="width: 5%">No</th>
+                                    <th>Nama Desa</th>
+                                    <th class="text-right">Jumlah Kasus</th>
+                                    <th class="text-right pr-4">Total Luas Overlap (m²)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @forelse($topOverlapVillages as $index => $village)
+                                <tr>
+                                    <td class="pl-4">{{ $index + 1 }}</td>
+                                    <td class="font-weight-bold">{{ $village->desa }}</td>
+                                    <td class="text-right">
+                                        <span class="badge badge-danger p-2" style="font-size: 14px">
+                                            {{ number_format($village->total_kasus) }}
+                                        </span>
+                                    </td>
+                                    <td class="text-right pr-4 font-weight-bold">
+                                        {{ number_format($village->total_luas, 2) }}
+                                    </td>
+                                </tr>
+                                @empty
+                                <tr>
+                                    <td colspan="4" class="text-center text-muted py-4">
+                                        <i class="fas fa-check-circle text-success mb-2"></i><br>
+                                        Tidak ada data tumpang tindih yang signifikan.
+                                    </td>
+                                </tr>
+                                @endforelse
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card card-secondary card-outline shadow">
                 <div class="card-header border-0 d-flex justify-content-between align-items-center bg-white">
-                    <h3 class="card-title text-danger font-weight-bold">
-                        <i class="fas fa-exclamation-circle mr-2"></i>Detail Analisis Tumpang Tindih
+                    <h3 class="card-title text-secondary font-weight-bold">
+                        <i class="fas fa-list mr-2"></i>Detail Data Tumpang Tindih
                     </h3>
                     
                     <div>

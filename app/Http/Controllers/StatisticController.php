@@ -18,10 +18,9 @@ class StatisticController extends Controller
 
         // ==================================================================================
         // DEFINISI LOGIKA PENCARIAN (SQL EXPRESSION)
-        // Kita simpan string SQL ini ke variabel agar bisa dipakai di SELECT dan GROUP BY
         // ==================================================================================
 
-        // Logic untuk mendeteksi Tipe Hak (Prioritas: TIPEHAK -> tipehak -> TIPE_HAK -> HAK)
+        // Logic untuk mendeteksi Tipe Hak
         $hakExpression = "
             COALESCE(
                 NULLIF(properties->'raw_data'->>'TIPEHAK', ''), 
@@ -34,7 +33,7 @@ class StatisticController extends Controller
             )
         ";
 
-        // Logic untuk mendeteksi Nama Desa/Kelurahan (Prioritas: KELURAHAN -> kelurahan -> DESA)
+        // Logic untuk mendeteksi Nama Desa/Kelurahan
         $desaExpression = "
             COALESCE(
                 NULLIF(properties->'raw_data'->>'KELURAHAN', ''),
@@ -57,7 +56,6 @@ class StatisticController extends Controller
                 DB::raw("SUM(ST_Area(geom::geography)) as luas_m2")
             );
 
-        // Filter Wilayah (Cari text global agar aman dari perbedaan key KECAMATAN vs WADMKC)
         if ($kecamatan) {
             $queryHak->whereRaw("properties::text ILIKE ?", ['%' . $kecamatan . '%']);
         }
@@ -65,14 +63,13 @@ class StatisticController extends Controller
             $queryHak->whereRaw("properties::text ILIKE ?", ['%' . $desa . '%']);
         }
 
-        // GROUP BY wajib menggunakan raw expression yang sama persis dengan SELECT di Postgres
         $statsHak = $queryHak
             ->groupBy(DB::raw($hakExpression))
             ->orderBy('total', 'desc')
             ->get();
 
         // ==================================================================================
-        // 3. QUERY STATISTIK PER DESA
+        // 3. QUERY STATISTIK PER DESA (LUAS ASET)
         // ==================================================================================
         $queryDesa = DB::table('spatial_features')
             ->select(
@@ -81,12 +78,10 @@ class StatisticController extends Controller
                 DB::raw("SUM(ST_Area(geom::geography)) / 10000 as luas_hektar")
             );
 
-        // Filter Kecamatan
         if ($kecamatan) {
             $queryDesa->whereRaw("properties::text ILIKE ?", ['%' . $kecamatan . '%']);
         }
         
-        // GROUP BY & HAVING
         $statsDesa = $queryDesa
             ->groupBy(DB::raw($desaExpression))
             ->havingRaw("$desaExpression != 'Tanpa Desa'")
@@ -95,7 +90,7 @@ class StatisticController extends Controller
             ->get();
 
         // ==================================================================================
-        // 4. ANALISIS TUMPANG TINDIH (BACA DARI TABEL HASIL JOB)
+        // 4. ANALISIS TUMPANG TINDIH (DATA DETAIL)
         // ==================================================================================
         $overlapQuery = DB::table('overlap_results');
 
@@ -114,8 +109,28 @@ class StatisticController extends Controller
         // Total Luas Terpetakan
         $totalLuasTerpetakan = $statsHak->sum('luas_m2') / 10000; 
 
+        // ==================================================================================
+        // 5. [BARU] TOP 10 DESA DENGAN TUMPANG TINDIH TERBANYAK
+        // ==================================================================================
+        $queryTopOverlap = DB::table('overlap_results')
+            ->select(
+                'desa', 
+                DB::raw('COUNT(*) as total_kasus'), 
+                DB::raw('SUM(luas_overlap) as total_luas')
+            )
+            ->groupBy('desa')
+            ->orderBy('total_kasus', 'desc')
+            ->limit(10);
+
+        if ($kecamatan) {
+            $queryTopOverlap->where('kecamatan', 'ILIKE', '%' . $kecamatan . '%');
+        }
+        
+        $topOverlapVillages = $queryTopOverlap->get();
+
         return view('admin.statistic.index', compact(
-            'statsHak', 'statsDesa', 'overlaps', 'totalLuasTerpetakan', 'kecamatan', 'desa', 'lastUpdate'
+            'statsHak', 'statsDesa', 'overlaps', 'totalLuasTerpetakan', 
+            'kecamatan', 'desa', 'lastUpdate', 'topOverlapVillages' // Kirim variabel baru
         ));
     }
 
