@@ -485,34 +485,98 @@
     });
 
     async function startBatchUpload() {
+        // 1. Validasi Input
         var layerId = $('#uploadLayerSelect').val();
         if(!layerId) { Swal.fire('Error', 'Pilih Layer Tujuan dulu!', 'error'); return; }
         
         if (selectedFiles.length === 0) { Swal.fire('Warning', 'Pilih file dulu!', 'warning'); return; }
         
+        // 2. Siapkan UI
         $('#btnStartUpload').prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Memproses...');
-        $('#progressArea').show(); $('#uploadLog').show().html('');
+        $('#progressArea').show(); 
+        $('#uploadLog').show().html('');
         
-        let successCount = 0; let failCount = 0;
+        let successCount = 0; 
+        let failCount = 0;
+        let errorDetails = []; // Array untuk menampung pesan error spesifik
+
+        // 3. Loop Upload File
         for (let i = 0; i < selectedFiles.length; i++) {
             let file = selectedFiles[i];
+            
+            // Update Progress Bar
             let percent = Math.round(((i) / selectedFiles.length) * 100);
-            $('#progressBar').css('width', percent + '%'); $('#progressText').text(`Proses ${i+1}/${selectedFiles.length}`); $('#progressPercent').text(percent + '%');
+            $('#progressBar').css('width', percent + '%'); 
+            $('#progressText').text(`Proses ${i+1}/${selectedFiles.length}`); 
+            $('#progressPercent').text(percent + '%');
             
             let formData = new FormData(); 
             formData.append('shp_files[]', file);
-            formData.append('layer_id', layerId); // KIRIM LAYER ID
+            formData.append('layer_id', layerId);
 
             try {
-                let response = await fetch("{{ route('asset.uploadShp') }}", { method: 'POST', headers: { 'X-CSRF-TOKEN': '{{ csrf_token() }}', 'Accept': 'application/json' }, body: formData });
+                // Kirim ke Server
+                let response = await fetch("{{ route('asset.uploadShp') }}", { 
+                    method: 'POST', 
+                    headers: { 
+                        'X-CSRF-TOKEN': '{{ csrf_token() }}', 
+                        'Accept': 'application/json' 
+                    }, 
+                    body: formData 
+                });
+                
                 let result = await response.json();
-                if (response.ok) successCount++; else { failCount++; $('#uploadLog').append(`<div class="text-danger small"><i class="fas fa-times"></i> ${file.name}: ${result.message}</div>`); }
-            } catch (error) { failCount++; $('#uploadLog').append(`<div class="text-danger small"><i class="fas fa-times"></i> ${file.name}: Error</div>`); }
+                
+                if (response.ok) {
+                    successCount++; 
+                } else { 
+                    failCount++; 
+                    // TANGKAP PESAN ERROR DARI CONTROLLER
+                    let msg = result.message || 'Gagal tanpa pesan spesifik';
+                    
+                    // Simpan ke list error untuk Popup nanti
+                    errorDetails.push(`<b>${file.name}</b>: <span class="text-danger">${msg}</span>`);
+                    
+                    // Tampilkan di log kecil bawah progress bar
+                    $('#uploadLog').append(`<div class="text-danger small border-bottom py-1"><i class="fas fa-times"></i> ${file.name}: ${msg}</div>`); 
+                }
+            } catch (error) { 
+                failCount++; 
+                errorDetails.push(`<b>${file.name}</b>: Masalah Koneksi / Server Timeout`);
+                $('#uploadLog').append(`<div class="text-danger small"><i class="fas fa-times"></i> ${file.name}: Error Koneksi</div>`); 
+            }
         }
+        
+        // 4. Finalisasi UI
         $('#progressBar').css('width', '100%').addClass(failCount > 0 ? 'bg-warning' : 'bg-success');
         $('#progressText').text('Selesai!'); $('#progressPercent').text('100%');
         $('#btnStartUpload').html('Selesai').removeClass('btn-success').addClass('btn-secondary');
-        loadData(); Swal.fire({ title: 'Selesai', text: `Berhasil: ${successCount}, Gagal: ${failCount}`, icon: failCount === 0 ? 'success' : 'warning' });
+        
+        loadData(); // Refresh Peta
+        
+        // === 5. TAMPILKAN POPUP HASIL (DENGAN DETAIL ERROR) ===
+        if(failCount > 0) {
+            Swal.fire({
+                title: 'Proses Selesai (Ada Gagal)',
+                icon: 'warning',
+                width: 700,
+                html: `
+                    <div class="text-left">
+                        <p class="mb-2">
+                            <span class="badge badge-success p-2">Berhasil: ${successCount}</span>
+                            <span class="badge badge-danger p-2">Gagal: ${failCount}</span>
+                        </p>
+                        <div class="card bg-light">
+                            <div class="card-body p-2" style="max-height: 300px; overflow-y: auto; font-size: 0.85rem; text-align: left;">
+                                ${errorDetails.join('<hr class="my-1">')}
+                            </div>
+                        </div>
+                    </div>
+                `
+            });
+        } else {
+            Swal.fire('Sukses', `Berhasil upload ${successCount} file!`, 'success');
+        }
     }
     
     function resetUploadModal() {

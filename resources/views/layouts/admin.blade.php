@@ -54,6 +54,13 @@
                 </a>
             </li>
 
+            <li class="nav-item {{ request()->is('master-layer*') ? 'active' : '' }}">
+                <a class="nav-link" href="{{ route('master-layer.index') }}">
+                    <i class="fas fa-fw fa-layer-group"></i>
+                    <span>Master Layer</span>
+                </a>
+            </li>
+
 </ul>
       </nav>
     </div>

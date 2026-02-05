@@ -6,30 +6,23 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    public function up()
+    public function up(): void
     {
-        Schema::create('layers', function (Blueprint $table) {
-            $table->id();
-            $table->string('name');
-            $table->string('color')->default('#3388ff');
-            $table->text('description')->nullable();
-            $table->boolean('is_active')->default(true);
-            $table->timestamps();
-        });
-
-        // Update tabel spatial_features untuk relasi ke layers
-        Schema::table('spatial_features', function (Blueprint $table) {
-            $table->unsignedBigInteger('layer_id')->nullable()->after('id');
-            $table->foreign('layer_id')->references('id')->on('layers')->onDelete('set null');
-        });
+        // Cek dulu biar tidak error "Table already exists" jika dijalankan manual
+        if (!Schema::hasTable('layers')) {
+            Schema::create('layers', function (Blueprint $table) {
+                $table->id();
+                $table->string('name');
+                $table->string('color', 20);
+                $table->text('description')->nullable();
+                $table->boolean('is_active')->default(true);
+                $table->timestamps();
+            });
+        }
     }
 
-    public function down()
+    public function down(): void
     {
-        Schema::table('spatial_features', function (Blueprint $table) {
-            $table->dropForeign(['layer_id']);
-            $table->dropColumn('layer_id');
-        });
         Schema::dropIfExists('layers');
     }
 };

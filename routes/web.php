@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\GisController;
 use App\Http\Controllers\StatisticController;
+use App\Http\Controllers\LayerController; // <-- Tambahkan Controller Baru
 
 /*
 |--------------------------------------------------------------------------
@@ -15,7 +16,7 @@ Route::get('/', function () {
     return redirect()->route('dashboard');
 });
 
-// Group Route untuk GIS Controller
+// Group Route untuk GIS Controller (Peta & Aset)
 Route::controller(GisController::class)->group(function () {
     
     // 1. Halaman Utama & API Peta
@@ -32,10 +33,15 @@ Route::controller(GisController::class)->group(function () {
     Route::put('/asset/{id}', 'update')->name('asset.update');          // Simpan Edit
     Route::delete('/asset/{id}', 'destroy')->name('asset.destroy');     // Hapus Aset
 
-    // 4. Manajemen Layer (INI YANG MENYELESAIKAN ERROR ANDA)
-    Route::post('/layer', 'storeLayer')->name('layer.store');           // Simpan Layer Baru
-    Route::get('/layers', 'getLayers')->name('layer.get');              // Ambil Daftar Layer (JSON)
+    // 4. Manajemen Layer (AJAX di Peta)
+    // Route ini tetap ada untuk mendukung fitur "Tambah Layer" langsung dari peta
+    Route::post('/layer', 'storeLayer')->name('layer.store');           
+    Route::get('/layers', 'getLayers')->name('layer.get');              
 });
+
+// Group Route untuk Master Data Layer (Halaman Khusus Management)
+// Ini route baru untuk halaman CRUD Master Layer
+Route::resource('master-layer', LayerController::class)->except(['create', 'show', 'edit']);
 
 // Group Route untuk Statistik & Analisis
 Route::controller(StatisticController::class)->group(function () {
