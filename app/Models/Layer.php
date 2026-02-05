@@ -15,7 +15,8 @@ class Layer extends Model
         'name',
         'color',
         'description',
-        'is_active'
+        'is_active',
+        'mode' // <--- Tambahkan ini
     ];
 
     // Relasi ke SpatialFeature (Data Aset)

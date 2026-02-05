@@ -35,7 +35,8 @@
                         <tr>
                             <th width="5%">No</th>
                             <th>Nama Layer</th>
-                            <th>Warna</th>
+                            <th>Tipe Layer</th>
+                            <th>Warna Default</th>
                             <th>Keterangan</th>
                             <th width="10%">Status</th>
                             <th width="15%">Aksi</th>
@@ -46,6 +47,15 @@
                         <tr>
                             <td>{{ $index + 1 }}</td>
                             <td class="font-weight-bold">{{ $layer->name }}</td>
+                            <td>
+                                @if($layer->mode == 'auto_hak')
+                                    <span class="badge badge-info"><i class="fas fa-magic"></i> Otomatis (Smart)</span>
+                                    <div style="font-size: 0.75rem; color: #666;">Deteksi: HM, HGB, Wakaf, dll</div>
+                                @else
+                                    <span class="badge badge-secondary"><i class="fas fa-paint-brush"></i> Standar</span>
+                                    <div style="font-size: 0.75rem; color: #666;">Satu warna flat</div>
+                                @endif
+                            </td>
                             <td>
                                 <div class="d-flex align-items-center">
                                     <div style="width: 25px; height: 25px; background-color: {{ $layer->color }}; border: 1px solid #ccc; border-radius: 4px; margin-right: 10px;"></div>
@@ -62,10 +72,18 @@
                             </td>
                             <td>
                                 <button class="btn btn-sm btn-info" 
-                                    onclick="editLayer({{ $layer->id }}, '{{ $layer->name }}', '{{ $layer->color }}', '{{ $layer->description }}', {{ $layer->is_active }})">
+                                    onclick="editLayer(
+                                        {{ $layer->id }}, 
+                                        '{{ $layer->name }}', 
+                                        '{{ $layer->color }}', 
+                                        '{{ $layer->description }}', 
+                                        {{ $layer->is_active }},
+                                        '{{ $layer->mode ?? 'standard' }}'
+                                    )">
                                     <i class="fas fa-edit"></i>
                                 </button>
-                                <form action="{{ route('master-layer.destroy', $layer->id) }}" method="POST" class="d-inline" onsubmit="return confirm('Yakin hapus layer ini?')">
+                                
+                                <form action="{{ route('master-layer.destroy', $layer->id) }}" method="POST" class="d-inline" onsubmit="return confirm('Yakin hapus layer ini? Data aset di dalamnya akan ikut terhapus atau error.')">
                                     @csrf @method('DELETE')
                                     <button type="submit" class="btn btn-sm btn-danger"><i class="fas fa-trash"></i></button>
                                 </form>
@@ -73,7 +91,7 @@
                         </tr>
                         @empty
                         <tr>
-                            <td colspan="6" class="text-center">Data masih kosong. Silakan tambah layer baru.</td>
+                            <td colspan="7" class="text-center">Data masih kosong. Silakan tambah layer baru.</td>
                         </tr>
                         @endforelse
                     </tbody>
@@ -95,15 +113,28 @@
                 <div class="modal-body">
                     <div class="form-group">
                         <label>Nama Layer <span class="text-danger">*</span></label>
-                        <input type="text" name="name" class="form-control" placeholder="Contoh: SHM, HGB, Tanah Wakaf" required>
+                        <input type="text" name="name" class="form-control" placeholder="Contoh: Peta Bidang Tanah / LSD" required>
                     </div>
+
                     <div class="form-group">
-                        <label>Warna Peta <span class="text-danger">*</span></label>
+                        <label>Tipe Layer <span class="text-danger">*</span></label>
+                        <select name="mode" class="form-control" id="createMode" onchange="checkMode('create')">
+                            <option value="standard">Layer Standar (Satu Warna - Misal: LSD)</option>
+                            <option value="auto_hak">Layer Utama (Smart Color - HM/HGB/Wakaf)</option>
+                        </select>
+                        <small class="text-muted" id="createModeHelp">
+                            Warna akan mengikuti settingan di bawah ini untuk semua data.
+                        </small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Warna Default <span class="text-danger">*</span></label>
                         <div class="input-group">
                             <input type="color" name="color" class="form-control" style="height: 40px;" required>
                         </div>
                         <small class="text-muted">Klik kotak warna untuk memilih.</small>
                     </div>
+                    
                     <div class="form-group">
                         <label>Keterangan</label>
                         <textarea name="description" class="form-control" rows="2"></textarea>
@@ -132,14 +163,28 @@
                         <label>Nama Layer <span class="text-danger">*</span></label>
                         <input type="text" name="name" id="editName" class="form-control" required>
                     </div>
+
                     <div class="form-group">
-                        <label>Warna Peta <span class="text-danger">*</span></label>
+                        <label>Tipe Layer <span class="text-danger">*</span></label>
+                        <select name="mode" class="form-control" id="editMode" onchange="checkMode('edit')">
+                            <option value="standard">Layer Standar (Satu Warna)</option>
+                            <option value="auto_hak">Layer Utama (Smart Color - HM/HGB/Wakaf)</option>
+                        </select>
+                        <small class="text-muted" id="editModeHelp">
+                            Keterangan tipe layer.
+                        </small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Warna Default <span class="text-danger">*</span></label>
                         <input type="color" name="color" id="editColor" class="form-control" style="height: 40px;" required>
                     </div>
+                    
                     <div class="form-group">
                         <label>Keterangan</label>
                         <textarea name="description" id="editDesc" class="form-control" rows="2"></textarea>
                     </div>
+                    
                     <div class="form-group form-check">
                         <input type="checkbox" class="form-check-input" id="editActive" name="is_active" value="1">
                         <label class="form-check-label" for="editActive">Aktif / Tampilkan di Peta</label>
@@ -155,13 +200,35 @@
 </div>
 
 <script>
-    function editLayer(id, name, color, desc, active) {
+    // Fungsi mengisi form edit saat tombol diklik
+    function editLayer(id, name, color, desc, active, mode) {
         $('#formEdit').attr('action', '/master-layer/' + id);
         $('#editName').val(name);
         $('#editColor').val(color);
         $('#editDesc').val(desc);
         $('#editActive').prop('checked', active == 1);
+        
+        // Set dropdown mode, default ke standard jika null
+        $('#editMode').val(mode ? mode : 'standard');
+        
+        // Jalankan pengecekan deskripsi bantuan
+        checkMode('edit');
+        
         $('#modalEdit').modal('show');
+    }
+
+    // Fungsi mengubah teks bantuan saat dropdown berubah
+    function checkMode(type) {
+        var mode = $('#' + type + 'Mode').val();
+        var helpText = '';
+        
+        if (mode == 'auto_hak') {
+            helpText = '<b>Mode Pintar:</b> Warna di peta akan otomatis berubah sesuai Hak (HM=Hijau, HGB=Kuning, dll). Warna default di bawah hanya dipakai jika hak tidak terdeteksi.';
+        } else {
+            helpText = '<b>Mode Standar:</b> Semua data di layer ini akan menggunakan satu warna yang Anda pilih di bawah.';
+        }
+        
+        $('#' + type + 'ModeHelp').html(helpText);
     }
 </script>
 @endsection

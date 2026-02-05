@@ -13,7 +13,7 @@ use RecursiveDirectoryIterator;
 
 class GisController extends Controller
 {
-    // --- Helper ---
+    // --- Helper 1: Keyword Pencarian ---
     private function getHakKeywords($kode) {
         if (!$kode) return [];
         $kode = strtoupper($kode);
@@ -24,6 +24,20 @@ class GisController extends Controller
         if ($kode == 'WAKAF') { $keywords[] = 'Wakaf'; }
         if ($kode == 'KOSONG' || $kode == 'TANPA HAK') { $keywords[] = 'Tanah Negara'; $keywords[] = 'Belum Ada Hak'; $keywords[] = 'null'; }
         return $keywords;
+    }
+
+    // --- Helper 2: Deteksi Warna Otomatis (Sub-Layer Logic) ---
+    private function getHakColor($tipeHak) {
+        $tipe = strtoupper($tipeHak ?? '');
+        
+        // Logika Pewarnaan Peta Bidang
+        if (str_contains($tipe, 'HM') || str_contains($tipe, 'MILIK')) return '#28a745';      // Hijau (Hak Milik)
+        if (str_contains($tipe, 'HGB') || str_contains($tipe, 'GUNA BANGUNAN')) return '#ffc107'; // Kuning (HGB)
+        if (str_contains($tipe, 'HP') || str_contains($tipe, 'PAKAI')) return '#17a2b8';      // Biru Muda (Hak Pakai)
+        if (str_contains($tipe, 'WAKAF')) return '#ffffff';    // Putih (Wakaf)
+        if (str_contains($tipe, 'HPL') || str_contains($tipe, 'PENGELOLAAN')) return '#6f42c1';   // Ungu (HPL)
+        
+        return '#6c757d'; // Abu-abu (Tidak diketahui/Tanah Negara)
     }
 
     // --- Page & API ---
@@ -92,10 +106,31 @@ class GisController extends Controller
                 $strategy = ($zoom > 16 || !empty($search) || !empty($hak)) ? 'detail' : 'simplified';
 
                 $data = $query->select('id', 'name', 'properties', 'layer_id', DB::raw("$selectGeom as geometry"))->limit(3000)->get();
+                
                 foreach ($data as $item) {
                     if (!$item->geometry) continue;
                     $props = $item->properties ?? [];
-                    $props['layer_color'] = $item->layer->color ?? null; 
+
+                    // --- LOGIKA SMART LAYER vs STANDARD LAYER ---
+                    $finalColor = '#3388ff'; // Default fallback
+
+                    if ($item->layer) {
+                        // Cek Mode Layer (Pastikan kolom 'mode' sudah ada di tabel layers)
+                        // Jika 'auto_hak' => Deteksi Sub-layer otomatis
+                        if (($item->layer->mode ?? 'standard') === 'auto_hak') {
+                            $tipeHak = $props['raw_data']['TIPEHAK'] 
+                                    ?? $props['raw_data']['TIPE_HAK'] 
+                                    ?? $props['raw_data']['REMARK'] 
+                                    ?? '';
+                            $finalColor = $this->getHakColor($tipeHak);
+                        } else {
+                            // Jika 'standard' (LSD) => Pakai warna statis layer
+                            $finalColor = $item->layer->color;
+                        }
+                    }
+
+                    $props['layer_color'] = $finalColor; 
+
                     $features[] = [
                         'type' => 'Feature', 'geometry' => json_decode($item->geometry), 
                         'properties' => array_merge(['id'=>$item->id, 'name'=>$item->name], $props)
@@ -109,7 +144,7 @@ class GisController extends Controller
     // --- IMPORT SHP (UPDATE IF EXISTS, INSERT IF NEW) ---
     public function storeShp(Request $request)
     {
-        Log::info('--- MEMULAI UPLOAD SHP (UPDATE/INSERT) ---'); 
+        Log::info('--- MEMULAI UPLOAD SHP ---'); 
 
         set_time_limit(0); ini_set('memory_limit', '-1'); ini_set('max_execution_time', 0);
 
@@ -123,11 +158,9 @@ class GisController extends Controller
         if (!is_array($files)) $files = [$files];
         $layerId = $request->layer_id;
 
-        $insertedCount = 0; 
-        $updatedCount = 0;
-        $failedInfo = [];
+        $insertedCount = 0; $updatedCount = 0; $failedInfo = [];
 
-        // Deteksi OS & GDAL
+        // Deteksi OS
         $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
         $envPrefix = "";
         if ($isWindows) {
@@ -159,7 +192,6 @@ class GisController extends Controller
                 $shpFile = $shpFiles[0];
                 $geojsonFile = $extractPath . '/output.json';
                 
-                // Konversi ke GeoJSON (2D)
                 $dimFlag = "-dim XY"; 
                 if ($isWindows) {
                     $cmd = "{$envPrefix}ogr2ogr -f GeoJSON $dimFlag -t_srs EPSG:4326 \"{$geojsonFile}\" \"{$shpFile}\" 2>&1";
@@ -176,7 +208,6 @@ class GisController extends Controller
                 $geoData = json_decode($jsonContent, true);
                 if (json_last_error() !== JSON_ERROR_NONE || !isset($geoData['features'])) throw new \Exception('JSON Invalid.');
 
-                // Transaction Database
                 DB::transaction(function () use ($geoData, $layerId, &$insertedCount, &$updatedCount) {
                     foreach ($geoData['features'] as $feature) {
                         if (!isset($feature['geometry'])) continue;
@@ -184,23 +215,19 @@ class GisController extends Controller
                         $props = $feature['properties'] ?? [];
                         $geom = json_encode($feature['geometry']);
                         
-                        // Cari Nama Aset dari properties
                         $name = null;
                         foreach ($props as $k => $v) {
                             if (preg_match('/(nama|name|nib|pemilik)/i', $k) && !empty($v)) { $name = $v; break; }
                         }
                         if (!$name) $name = 'Aset Import';
 
-                        // --- LOGIKA CEK: UPDATE ATAU INSERT ---
-                        
-                        // 1. Cek apakah data sudah ada (Berdasarkan Layer ID dan Nama)
+                        // LOGIKA: Update jika ada, Insert jika baru
                         $existingRecord = DB::table('spatial_features')
                             ->where('layer_id', $layerId)
                             ->where('name', $name)
                             ->first();
 
                         if ($existingRecord) {
-                            // 2. JIKA ADA => UPDATE (Perbarui Properties & Geometry)
                             DB::table('spatial_features')
                                 ->where('id', $existingRecord->id)
                                 ->update([
@@ -210,20 +237,17 @@ class GisController extends Controller
                                 ]);
                             $updatedCount++;
                         } else {
-                            // 3. JIKA TIDAK ADA => INSERT (Buat Baru)
                             DB::table('spatial_features')->insert([
                                 'name'       => $name,
                                 'layer_id'   => $layerId,
                                 'properties' => json_encode(['type' => 'Imported', 'raw_data' => $props]),
                                 'geom'       => DB::raw("ST_Force2D(ST_SetSRID(ST_GeomFromGeoJSON('$geom'), 4326))"), 
-                                'created_at' => now(), 
-                                'updated_at' => now()
+                                'created_at' => now(), 'updated_at' => now()
                             ]);
                             $insertedCount++;
                         }
                     }
                 });
-                
                 Log::info("Sukses file: " . $file->getClientOriginalName() . ". Insert: $insertedCount, Update: $updatedCount");
 
             } catch (\Exception $e) {
@@ -233,17 +257,9 @@ class GisController extends Controller
                 $this->deleteDirectory($extractPath);
             }
         }
-
-        // Respon ke Javascript
         if ($request->ajax()) {
-            if (count($failedInfo) > 0) {
-                return response()->json(['status' => 'partial_error', 'message' => implode(' | ', $failedInfo)], 422);
-            }
-            
-            // Pesan Sukses Detail
-            $msg = "Selesai! Baru: $insertedCount, Update: $updatedCount";
-            
-            return response()->json(['status' => 'success', 'message' => $msg]);
+            if (count($failedInfo) > 0) return response()->json(['status' => 'partial_error', 'message' => implode(' | ', $failedInfo)], 422);
+            return response()->json(['status' => 'success', 'message' => "Selesai! Baru: $insertedCount, Update: $updatedCount"]);
         }
         return back()->with('success', "Proses Selesai! (Baru: $insertedCount, Update: $updatedCount)");
     }
@@ -258,7 +274,7 @@ class GisController extends Controller
         return rmdir($dir);
     }
 
-    // --- Manual Draw (Fixed Force2D) ---
+    // --- Manual Draw ---
     public function storeDraw(Request $request)
     {
         try {
@@ -280,7 +296,6 @@ class GisController extends Controller
                     ],
                     'color' => $request->color, 'description' => $request->description
                 ]),
-                // FIX Force2D
                 'geom' => DB::raw("ST_Force2D(ST_SetSRID(ST_GeomFromGeoJSON('$geometryJson'), 4326))"),
                 'created_at' => now(), 'updated_at' => now()
             ]);
@@ -289,10 +304,18 @@ class GisController extends Controller
     }
 
     // --- Layer & CRUD ---
+    // Update storeLayer agar bisa menyimpan MODE (auto_hak / standard)
     public function storeLayer(Request $request)
     {
         $request->validate(['name' => 'required|string|max:255', 'color' => 'required|string|max:7']);
-        $layer = Layer::create(['name' => $request->name, 'color' => $request->color, 'description' => $request->description]);
+        
+        $layer = Layer::create([
+            'name' => $request->name, 
+            'color' => $request->color, 
+            'description' => $request->description,
+            'mode' => $request->mode ?? 'standard', // Default standard jika tidak dipilih
+            'is_active' => true
+        ]);
         return response()->json(['status' => 'success', 'data' => $layer]);
     }
     public function getLayers() { return response()->json(Layer::all()); }
