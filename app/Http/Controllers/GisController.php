@@ -115,8 +115,6 @@ class GisController extends Controller
                     $finalColor = '#3388ff'; // Default fallback
 
                     if ($item->layer) {
-                        // Cek Mode Layer (Pastikan kolom 'mode' sudah ada di tabel layers)
-                        // Jika 'auto_hak' => Deteksi Sub-layer otomatis
                         if (($item->layer->mode ?? 'standard') === 'auto_hak') {
                             $tipeHak = $props['raw_data']['TIPEHAK'] 
                                     ?? $props['raw_data']['TIPE_HAK'] 
@@ -124,7 +122,6 @@ class GisController extends Controller
                                     ?? '';
                             $finalColor = $this->getHakColor($tipeHak);
                         } else {
-                            // Jika 'standard' (LSD) => Pakai warna statis layer
                             $finalColor = $item->layer->color;
                         }
                     }
@@ -141,19 +138,19 @@ class GisController extends Controller
         } catch (\Exception $e) { return response()->json(['error'=>$e->getMessage()], 500); }
     }
 
-    // --- IMPORT SHP (UPDATE IF EXISTS, INSERT IF NEW) ---
+    // --- IMPORT SHP (DIPERBAIKI DENGAN FIX PROJ_LIB) ---
+// --- IMPORT SHP (FIXED: LOAD FROM ENV) ---
     public function storeShp(Request $request)
     {
-        Log::info('--- MEMULAI UPLOAD SHP (STRICT CHECK) ---'); 
+        Log::info('--- MEMULAI UPLOAD SHP ---'); 
 
-        // Set Timeout & Memory agar kuat proses file besar
         set_time_limit(300); 
         ini_set('memory_limit', '-1'); 
         ini_set('max_execution_time', 300);
 
         $request->validate([
             'shp_files' => 'required', 
-            'shp_files.*' => 'file|mimes:zip|max:512000',
+            'shp_files.*' => 'file|max:512000', 
             'layer_id' => 'nullable|exists:layers,id'
         ]);
         
@@ -163,55 +160,94 @@ class GisController extends Controller
 
         $insertedCount = 0; $updatedCount = 0; $failedInfo = [];
 
-        // Deteksi OS untuk Path GDAL
+        // --- DETEKSI OS & ENV PATH ---
         $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
         $envPrefix = "";
+        
         if ($isWindows) {
-            $candidates = ['C:\\OSGeo4W\\share\\proj', 'C:\\OSGeo4W64\\share\\proj', 'C:\\Program Files\\GDAL\\projlib', 'C:\\GDAL\\projlib'];
-            $projLibPath = null;
-            foreach ($candidates as $path) { if (file_exists($path . '\\proj.db')) { $projLibPath = $path; break; } }
-            $envPrefix = $projLibPath ? "set \"PROJ_LIB={$projLibPath}\" && " : "set \"PROJ_LIB=\" && ";
+            // 1. Prioritas Utama: Ambil dari .env
+            $projLibPath = env('GDAL_PROJ_LIB');
+
+            // 2. Jika di .env kosong, coba cari manual (Fallback)
+            if (!$projLibPath || !file_exists($projLibPath . '\\proj.db')) {
+                $candidates = [
+                    'C:\\OSGeo4W\\share\\proj',
+                    'C:\\OSGeo4W64\\share\\proj',
+                    'C:\\Program Files\\GDAL\\projlib',
+                    'C:\\GDAL\\data',
+                    'C:\\Program Files\\QGIS 3.28\\share\\proj',
+                    'C:\\Program Files\\QGIS 3.34\\share\\proj',
+                    // Tambahkan path lain jika perlu
+                ];
+                foreach ($candidates as $path) { 
+                    if (file_exists($path . '\\proj.db')) { 
+                        $projLibPath = $path; 
+                        break; 
+                    } 
+                }
+            }
+
+            if ($projLibPath && file_exists($projLibPath . '\\proj.db')) {
+                Log::info("Fix PROJ_LIB: Menggunakan path -> " . $projLibPath);
+                $envPrefix = "set \"PROJ_LIB={$projLibPath}\" && ";
+            } else {
+                // Jika masih gagal, kita Log Warning keras
+                Log::error("CRITICAL: File proj.db tidak ditemukan! Harap set GDAL_PROJ_LIB di file .env");
+            }
         }
 
         foreach ($files as $file) {
-            Log::info("Memproses file: " . $file->getClientOriginalName()); 
+            $originalName = $file->getClientOriginalName();
+            Log::info("Memproses file: " . $originalName); 
 
             $uniqueId = uniqid('shp_', true);
             $extractPath = storage_path('app/temp_shp/' . $uniqueId);
             
             try {
                 if (!file_exists($extractPath)) mkdir($extractPath, 0777, true);
+                
                 $zip = new ZipArchive;
-                if ($zip->open($file->getPathname()) === TRUE) { $zip->extractTo($extractPath); $zip->close(); } 
-                else { throw new \Exception('Gagal ekstrak ZIP.'); }
+                if ($zip->open($file->getPathname()) === TRUE) { 
+                    $zip->extractTo($extractPath); 
+                    $zip->close(); 
+                } else { 
+                    throw new \Exception('Gagal ekstrak file ZIP.'); 
+                }
 
                 $shpFiles = [];
                 $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($extractPath));
                 foreach ($iterator as $info) {
-                    if ($info->isFile() && strtolower($info->getExtension()) === 'shp') $shpFiles[] = $info->getPathname();
+                    if ($info->isFile() && strtolower($info->getExtension()) === 'shp') {
+                        $shpFiles[] = $info->getPathname();
+                    }
                 }
 
-                if (empty($shpFiles)) throw new \Exception('File .shp tidak ditemukan.');
+                if (empty($shpFiles)) throw new \Exception('File .shp tidak ditemukan di dalam ZIP.');
+                
                 $shpFile = $shpFiles[0];
                 $geojsonFile = $extractPath . '/output.json';
                 
-                // Konversi SHP ke GeoJSON (Flat 2D)
-                $dimFlag = "-dim XY"; 
-                if ($isWindows) {
-                    $cmd = "{$envPrefix}ogr2ogr -f GeoJSON $dimFlag -t_srs EPSG:4326 \"{$geojsonFile}\" \"{$shpFile}\" 2>&1";
-                } else {
-                    $cmd = "ogr2ogr -f GeoJSON $dimFlag -t_srs EPSG:4326 \"{$geojsonFile}\" \"{$shpFile}\" 2>&1";
-                }
+                // Command Konversi
+                $cmd = $isWindows 
+                    ? "{$envPrefix}ogr2ogr -f GeoJSON -dim XY -t_srs EPSG:4326 -skipfailures \"{$geojsonFile}\" \"{$shpFile}\" 2>&1"
+                    : "ogr2ogr -f GeoJSON -dim XY -t_srs EPSG:4326 -skipfailures \"{$geojsonFile}\" \"{$shpFile}\" 2>&1";
                 
-                $output = []; $returnVar = 0;
+                $output = []; 
+                $returnVar = 0;
                 exec($cmd, $output, $returnVar);
 
-                if (!file_exists($geojsonFile) || filesize($geojsonFile) < 10) throw new \Exception("Gagal konversi GDAL.");
+                // Cek hasil
+                if (!file_exists($geojsonFile) || filesize($geojsonFile) < 10) {
+                    Log::error("GDAL Error Output ({$originalName}): " . implode("\n", $output));
+                    throw new \Exception("Gagal konversi GDAL. Cek Log Laravel (Kemungkinan path PROJ_LIB salah).");
+                }
 
                 $jsonContent = file_get_contents($geojsonFile);
                 $geoData = json_decode($jsonContent, true);
                 
-                if (json_last_error() !== JSON_ERROR_NONE || !isset($geoData['features'])) throw new \Exception('JSON Invalid.');
+                if (json_last_error() !== JSON_ERROR_NONE || !isset($geoData['features'])) {
+                    throw new \Exception('Format JSON hasil konversi tidak valid.');
+                }
 
                 DB::transaction(function () use ($geoData, $layerId, &$insertedCount, &$updatedCount) {
                     foreach ($geoData['features'] as $feature) {
@@ -220,18 +256,13 @@ class GisController extends Controller
                         $props = $feature['properties'] ?? [];
                         $geom = json_encode($feature['geometry']);
                         
-                        // 1. Ambil Kunci Utama untuk Pengecekan
-                        // Menggunakan operator ?? null jika kolom tidak ada di file SHP
                         $checkId        = $props['ID'] ?? null;
                         $checkNib       = $props['NIB'] ?? null;
                         $checkKecamatan = $props['KECAMATAN'] ?? null;
                         $checkKelurahan = $props['KELURAHAN'] ?? null;
 
-                        // Tentukan Nama Aset untuk tampilan (Prioritas NIB -> ID -> Default)
                         $name = $checkNib ?? $checkId ?? 'Aset Import';
 
-                        // 2. LOGIKA PENGECEKAN DUPLIKAT YANG DIPERKETAT
-                        // Mencari data yang SAMA PERSIS di 4 kolom tersebut dalam JSON
                         $existingRecord = DB::table('spatial_features')
                             ->where('layer_id', $layerId)
                             ->where('properties->raw_data->ID', $checkId)
@@ -241,19 +272,15 @@ class GisController extends Controller
                             ->first();
 
                         if ($existingRecord) {
-                            // --- KONDISI 1: DATA SAMA DITEMUKAN => UPDATE ---
-                            DB::table('spatial_features')
-                                ->where('id', $existingRecord->id)
-                                ->update([
-                                    'name'       => $name, // Update nama jaga-jaga kalau ada perubahan
-                                    'layer_id'   => $layerId,
-                                    'properties' => json_encode(['type' => 'Imported', 'raw_data' => $props]),
-                                    'geom'       => DB::raw("ST_Force2D(ST_SetSRID(ST_GeomFromGeoJSON('$geom'), 4326))"),
-                                    'updated_at' => now()
-                                ]);
+                            DB::table('spatial_features')->where('id', $existingRecord->id)->update([
+                                'name'       => $name,
+                                'layer_id'   => $layerId,
+                                'properties' => json_encode(['type' => 'Imported', 'raw_data' => $props]),
+                                'geom'       => DB::raw("ST_Force2D(ST_SetSRID(ST_GeomFromGeoJSON('$geom'), 4326))"),
+                                'updated_at' => now()
+                            ]);
                             $updatedCount++;
                         } else {
-                            // --- KONDISI 2: DATA TIDAK SAMA / TIDAK ADA => INSERT BARU ---
                             DB::table('spatial_features')->insert([
                                 'name'       => $name,
                                 'layer_id'   => $layerId,
@@ -267,10 +294,10 @@ class GisController extends Controller
                     }
                 });
                 
-                Log::info("Sukses file: " . $file->getClientOriginalName() . ". Insert: $insertedCount, Update: $updatedCount");
+                Log::info("Sukses file: " . $originalName . ". Insert: $insertedCount, Update: $updatedCount");
 
             } catch (\Exception $e) {
-                Log::error("Error file " . $file->getClientOriginalName() . ": " . $e->getMessage());
+                Log::error("Error file " . $originalName . ": " . $e->getMessage());
                 $failedInfo[] = "$originalName: " . $e->getMessage();
             } finally {
                 $this->deleteDirectory($extractPath);
@@ -280,6 +307,10 @@ class GisController extends Controller
         if ($request->ajax()) {
             if (count($failedInfo) > 0) return response()->json(['status' => 'partial_error', 'message' => implode(' | ', $failedInfo)], 422);
             return response()->json(['status' => 'success', 'message' => "Selesai! Baru: $insertedCount, Update: $updatedCount"]);
+        }
+        
+        if (count($failedInfo) > 0) {
+            return back()->with('error', "Gagal sebagian: " . implode(' | ', $failedInfo));
         }
         return back()->with('success', "Proses Selesai! (Baru: $insertedCount, Update: $updatedCount)");
     }
@@ -324,7 +355,6 @@ class GisController extends Controller
     }
 
     // --- Layer & CRUD ---
-    // Update storeLayer agar bisa menyimpan MODE (auto_hak / standard)
     public function storeLayer(Request $request)
     {
         $request->validate(['name' => 'required|string|max:255', 'color' => 'required|string|max:7']);
@@ -333,7 +363,7 @@ class GisController extends Controller
             'name' => $request->name, 
             'color' => $request->color, 
             'description' => $request->description,
-            'mode' => $request->mode ?? 'standard', // Default standard jika tidak dipilih
+            'mode' => $request->mode ?? 'standard', 
             'is_active' => true
         ]);
         return response()->json(['status' => 'success', 'data' => $layer]);
@@ -342,20 +372,46 @@ class GisController extends Controller
 
     public function indexTable(Request $request)
     {
-        $search = $request->input('search'); $kecamatan = $request->input('kecamatan');
-        $desa = $request->input('desa'); $hak = $request->input('hak'); $sumber = $request->input('sumber');
+        $search = $request->input('search'); 
+        $kecamatan = $request->input('kecamatan');
+        $desa = $request->input('desa'); 
+        $hak = $request->input('hak'); 
+        $sumber = $request->input('sumber');
+        $layerId = $request->input('layer_id'); // Filter Layer
 
         $query = SpatialFeature::query()->with('layer');
+
+        if ($layerId) {
+            $query->where('layer_id', $layerId);
+        }
+        
         if ($sumber == 'manual') $query->whereRaw("properties->>'type' = 'Manual'");
         elseif ($sumber == 'import') $query->whereRaw("properties->>'type' = 'Imported'");
-        if ($search) { $term = '%' . $search . '%'; $query->where(function($q) use ($term) { $q->where('name', 'ILIKE', $term)->orWhereRaw("properties::text ILIKE ?", [$term]); }); }
-        if ($hak) { $keywords = $this->getHakKeywords($hak); $query->where(function($q) use ($keywords) { foreach ($keywords as $word) $q->orWhereRaw("properties::text ILIKE ?", ['%' . $word . '%']); }); }
+        
+        if ($search) { 
+            $term = '%' . $search . '%'; 
+            $query->where(function($q) use ($term) { 
+                $q->where('name', 'ILIKE', $term)->orWhereRaw("properties::text ILIKE ?", [$term]); 
+            }); 
+        }
+        
+        if ($hak) { 
+            $keywords = $this->getHakKeywords($hak); 
+            $query->where(function($q) use ($keywords) { 
+                foreach ($keywords as $word) $q->orWhereRaw("properties::text ILIKE ?", ['%' . $word . '%']); 
+            }); 
+        }
+        
         if ($kecamatan) $query->whereRaw("properties::text ILIKE ?", ['%' . $kecamatan . '%']);
         if ($desa) $query->whereRaw("properties::text ILIKE ?", ['%' . $desa . '%']);
 
         $data = $query->select('id', 'name', 'properties', 'layer_id', 'created_at', DB::raw("ST_AsGeoJSON(ST_Centroid(geom::geometry)) as center"))
                       ->orderBy('id', 'desc')->paginate(15)->withQueryString();
-        return view('admin.aset.index', compact('data', 'search', 'kecamatan', 'desa', 'hak', 'sumber'));
+        
+        // Ambil data layer untuk dropdown filter
+        $layers = Layer::orderBy('name', 'asc')->get();
+        
+        return view('admin.aset.index', compact('data', 'layers', 'search', 'kecamatan', 'desa', 'hak', 'sumber', 'layerId'));
     }
 
     public function show($id)

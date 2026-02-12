@@ -39,6 +39,7 @@
                     <input type="hidden" name="sumber" value="{{ $sumber }}">
 
                     <div class="row">
+                        {{-- 1. Filter Pencarian Nama --}}
                         <div class="col-md-3 mb-2">
                             <label class="small text-muted font-weight-bold">Cari Nama/NIB</label>
                             <div class="input-group input-group-sm">
@@ -48,7 +49,22 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="col-md-3 mb-2">
+
+                        {{-- 2. Filter Layer (BARU) --}}
+                        <div class="col-md-2 mb-2">
+                            <label class="small text-muted font-weight-bold">Filter Layer</label>
+                            <select name="layer_id" class="form-control form-control-sm">
+                                <option value="">-- Semua Layer --</option>
+                                @foreach($layers as $l)
+                                    <option value="{{ $l->id }}" {{ $layerId == $l->id ? 'selected' : '' }}>
+                                        {{ $l->name }}
+                                    </option>
+                                @endforeach
+                            </select>
+                        </div>
+
+                        {{-- 3. Filter Tipe Hak --}}
+                        <div class="col-md-2 mb-2">
                             <label class="small text-muted font-weight-bold">Filter Tipe Hak</label>
                             <select name="hak" class="form-control form-control-sm">
                                 <option value="">-- Semua Hak --</option>
@@ -59,14 +75,16 @@
                                 <option value="KOSONG" {{ $hak == 'KOSONG' ? 'selected' : '' }}>Belum Ada Hak</option>
                             </select>
                         </div>
-                        <div class="col-md-2 mb-2">
-                            <label class="small text-muted font-weight-bold">Kecamatan</label>
-                            <input type="text" name="kecamatan" class="form-control form-control-sm" placeholder="Kecamatan..." value="{{ $kecamatan }}">
+
+                        {{-- 4. Filter Wilayah (Digabung agar rapi) --}}
+                        <div class="col-md-3 mb-2">
+                            <label class="small text-muted font-weight-bold">Wilayah (Kec / Desa)</label>
+                            <div class="input-group input-group-sm">
+                                <input type="text" name="kecamatan" class="form-control" placeholder="Kecamatan" value="{{ $kecamatan }}">
+                                <input type="text" name="desa" class="form-control" placeholder="Desa" value="{{ $desa }}">
+                            </div>
                         </div>
-                        <div class="col-md-2 mb-2">
-                            <label class="small text-muted font-weight-bold">Desa/Kelurahan</label>
-                            <input type="text" name="desa" class="form-control form-control-sm" placeholder="Desa..." value="{{ $desa }}">
-                        </div>
+
                         <div class="col-md-2 mb-2 d-flex align-items-end">
                             <button type="submit" class="btn btn-sm btn-primary btn-block shadow-sm">
                                 <i class="fas fa-filter mr-1"></i> Terapkan
@@ -81,10 +99,11 @@
                     <thead class="bg-primary text-white">
                         <tr>
                             <th style="width: 5%">No</th>
-                            <th style="width: 25%">Nama Aset / NIB</th>
+                            <th style="width: 20%">Nama Aset / NIB</th>
+                            <th style="width: 10%">Layer</th> {{-- Kolom Baru --}}
                             <th style="width: 15%">Tipe Hak</th>
                             <th style="width: 20%">Lokasi Wilayah</th>
-                            <th style="width: 15%">Luas (m²)</th>
+                            <th style="width: 10%">Luas (m²)</th>
                             <th style="width: 10%">Sumber</th>
                             <th class="text-center" style="width: 10%">Aksi</th>
                         </tr>
@@ -122,6 +141,18 @@
                                         <br><small class="text-muted"><i class="fas fa-barcode mr-1"></i>NIB: {{ $raw['NIB'] }}</small>
                                     @endif
                                 </td>
+                                
+                                {{-- TAMPILAN LAYER (BARU) --}}
+                                <td>
+                                    @if($item->layer)
+                                        <span class="badge badge-light border" style="color: {{ $item->layer->color }}; border-color: {{ $item->layer->color }} !important;">
+                                            {{ $item->layer->name }}
+                                        </span>
+                                    @else
+                                        <span class="text-muted text-xs font-italic">- No Layer -</span>
+                                    @endif
+                                </td>
+
                                 <td>
                                     <span class="badge {{ $badgeColor }} p-2 shadow-sm" style="font-size: 0.85em; font-weight: 500;">
                                         {{ Str::limit($tipeHak, 20) }}
@@ -157,7 +188,7 @@
                             </tr>
                         @empty
                             <tr>
-                                <td colspan="7" class="text-center py-5 text-muted">
+                                <td colspan="8" class="text-center py-5 text-muted"> {{-- Colspan diupdate jadi 8 --}}
                                     <div class="py-4">
                                         <i class="fas fa-folder-open fa-3x mb-3 text-gray-300"></i>
                                         <h5>Belum ada data aset yang ditemukan.</h5>
