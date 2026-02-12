@@ -144,13 +144,16 @@ class GisController extends Controller
     // --- IMPORT SHP (UPDATE IF EXISTS, INSERT IF NEW) ---
     public function storeShp(Request $request)
     {
-        Log::info('--- MEMULAI UPLOAD SHP ---'); 
+        Log::info('--- MEMULAI UPLOAD SHP (STRICT CHECK) ---'); 
 
-        set_time_limit(0); ini_set('memory_limit', '-1'); ini_set('max_execution_time', 0);
+        // Set Timeout & Memory agar kuat proses file besar
+        set_time_limit(300); 
+        ini_set('memory_limit', '-1'); 
+        ini_set('max_execution_time', 300);
 
         $request->validate([
             'shp_files' => 'required', 
-            'shp_files.*' => 'file|mimes:zip|max:102400',
+            'shp_files.*' => 'file|mimes:zip|max:512000',
             'layer_id' => 'nullable|exists:layers,id'
         ]);
         
@@ -160,7 +163,7 @@ class GisController extends Controller
 
         $insertedCount = 0; $updatedCount = 0; $failedInfo = [];
 
-        // Deteksi OS
+        // Deteksi OS untuk Path GDAL
         $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
         $envPrefix = "";
         if ($isWindows) {
@@ -192,6 +195,7 @@ class GisController extends Controller
                 $shpFile = $shpFiles[0];
                 $geojsonFile = $extractPath . '/output.json';
                 
+                // Konversi SHP ke GeoJSON (Flat 2D)
                 $dimFlag = "-dim XY"; 
                 if ($isWindows) {
                     $cmd = "{$envPrefix}ogr2ogr -f GeoJSON $dimFlag -t_srs EPSG:4326 \"{$geojsonFile}\" \"{$shpFile}\" 2>&1";
@@ -206,6 +210,7 @@ class GisController extends Controller
 
                 $jsonContent = file_get_contents($geojsonFile);
                 $geoData = json_decode($jsonContent, true);
+                
                 if (json_last_error() !== JSON_ERROR_NONE || !isset($geoData['features'])) throw new \Exception('JSON Invalid.');
 
                 DB::transaction(function () use ($geoData, $layerId, &$insertedCount, &$updatedCount) {
@@ -215,39 +220,53 @@ class GisController extends Controller
                         $props = $feature['properties'] ?? [];
                         $geom = json_encode($feature['geometry']);
                         
-                        $name = null;
-                        foreach ($props as $k => $v) {
-                            if (preg_match('/(nama|name|nib|pemilik)/i', $k) && !empty($v)) { $name = $v; break; }
-                        }
-                        if (!$name) $name = 'Aset Import';
+                        // 1. Ambil Kunci Utama untuk Pengecekan
+                        // Menggunakan operator ?? null jika kolom tidak ada di file SHP
+                        $checkId        = $props['ID'] ?? null;
+                        $checkNib       = $props['NIB'] ?? null;
+                        $checkKecamatan = $props['KECAMATAN'] ?? null;
+                        $checkKelurahan = $props['KELURAHAN'] ?? null;
 
-                        // LOGIKA: Update jika ada, Insert jika baru
+                        // Tentukan Nama Aset untuk tampilan (Prioritas NIB -> ID -> Default)
+                        $name = $checkNib ?? $checkId ?? 'Aset Import';
+
+                        // 2. LOGIKA PENGECEKAN DUPLIKAT YANG DIPERKETAT
+                        // Mencari data yang SAMA PERSIS di 4 kolom tersebut dalam JSON
                         $existingRecord = DB::table('spatial_features')
                             ->where('layer_id', $layerId)
-                            ->where('name', $name)
+                            ->where('properties->raw_data->ID', $checkId)
+                            ->where('properties->raw_data->NIB', $checkNib)
+                            ->where('properties->raw_data->KECAMATAN', $checkKecamatan)
+                            ->where('properties->raw_data->KELURAHAN', $checkKelurahan)
                             ->first();
 
                         if ($existingRecord) {
+                            // --- KONDISI 1: DATA SAMA DITEMUKAN => UPDATE ---
                             DB::table('spatial_features')
                                 ->where('id', $existingRecord->id)
                                 ->update([
+                                    'name'       => $name, // Update nama jaga-jaga kalau ada perubahan
+                                    'layer_id'   => $layerId,
                                     'properties' => json_encode(['type' => 'Imported', 'raw_data' => $props]),
                                     'geom'       => DB::raw("ST_Force2D(ST_SetSRID(ST_GeomFromGeoJSON('$geom'), 4326))"),
                                     'updated_at' => now()
                                 ]);
                             $updatedCount++;
                         } else {
+                            // --- KONDISI 2: DATA TIDAK SAMA / TIDAK ADA => INSERT BARU ---
                             DB::table('spatial_features')->insert([
                                 'name'       => $name,
                                 'layer_id'   => $layerId,
                                 'properties' => json_encode(['type' => 'Imported', 'raw_data' => $props]),
                                 'geom'       => DB::raw("ST_Force2D(ST_SetSRID(ST_GeomFromGeoJSON('$geom'), 4326))"), 
-                                'created_at' => now(), 'updated_at' => now()
+                                'created_at' => now(), 
+                                'updated_at' => now()
                             ]);
                             $insertedCount++;
                         }
                     }
                 });
+                
                 Log::info("Sukses file: " . $file->getClientOriginalName() . ". Insert: $insertedCount, Update: $updatedCount");
 
             } catch (\Exception $e) {
@@ -257,6 +276,7 @@ class GisController extends Controller
                 $this->deleteDirectory($extractPath);
             }
         }
+
         if ($request->ajax()) {
             if (count($failedInfo) > 0) return response()->json(['status' => 'partial_error', 'message' => implode(' | ', $failedInfo)], 422);
             return response()->json(['status' => 'success', 'message' => "Selesai! Baru: $insertedCount, Update: $updatedCount"]);

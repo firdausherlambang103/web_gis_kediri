@@ -12,7 +12,9 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('layers', function (Blueprint $table) {
-            //
+            // Menambahkan kolom 'mode' setelah kolom 'color'
+            // Default 'standard' agar data lama tidak error
+            $table->string('mode', 20)->default('standard')->after('color');
         });
     }
 
@@ -22,7 +24,7 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('layers', function (Blueprint $table) {
-            //
+            $table->dropColumn('mode');
         });
     }
 };
