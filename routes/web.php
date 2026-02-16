@@ -48,6 +48,10 @@ Route::resource('master-layer', LayerController::class)->except(['create', 'show
 // Group Route untuk Statistik & Analisis
 Route::controller(StatisticController::class)->group(function () {
     Route::get('/statistics', 'index')->name('statistics.index');
-    Route::post('/statistics/run', 'runAnalysis')->name('statistics.run');
+    
+    // UBAH BARIS INI: Gunakan 'any' atau 'match' agar bisa POST (ajax) dan GET (pagination)
+    Route::any('/statistics/run', 'runAnalysis')->name('statistics.run'); 
+    
+    // Route Export
     Route::get('/statistics/export', 'export')->name('statistics.export');
 });

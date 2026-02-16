@@ -3,127 +3,143 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use App\Models\SpatialFeature;
-use App\Models\Layer; 
+use App\Models\Layer; // Tambahkan Model Layer
 use Illuminate\Support\Facades\DB;
 use App\Jobs\AnalyzeOverlapsJob;
-use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class StatisticController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        // 1. Ambil semua layer untuk dropdown filter di view
+        // 1. Set waktu eksekusi
+        set_time_limit(300); 
+
+        // Ambil Daftar Layer untuk Filter
         $layers = Layer::orderBy('name', 'asc')->get();
+        $layerId = $request->input('layer_id');
+
+        // ==================================================================================
+        // DEFINISI LOGIKA PENCARIAN (SQL EXPRESSION)
+        // ==================================================================================
+
+        // Logic untuk mendeteksi Tipe Hak
+        $hakExpression = "
+            COALESCE(
+                NULLIF(properties->'raw_data'->>'TIPEHAK', ''), 
+                NULLIF(properties->'raw_data'->>'tipehak', ''), 
+                NULLIF(properties->'raw_data'->>'TIPE_HAK', ''), 
+                NULLIF(properties->'raw_data'->>'HAK', ''), 
+                NULLIF(properties->'raw_data'->>'hak', ''), 
+                NULLIF(properties->'raw_data'->>'STATUS', ''), 
+                'BELUM ADA HAK'
+            )
+        ";
+
+        // Logic untuk mendeteksi Nama Desa/Kelurahan
+        $desaExpression = "
+            COALESCE(
+                NULLIF(properties->'raw_data'->>'KELURAHAN', ''),
+                NULLIF(properties->'raw_data'->>'kelurahan', ''), 
+                NULLIF(properties->'raw_data'->>'DESA', ''),
+                NULLIF(properties->'raw_data'->>'desa', ''),
+                NULLIF(properties->'raw_data'->>'NAMOBJ', ''),
+                NULLIF(properties->'raw_data'->>'WADMKD', ''), 
+                'Tanpa Desa'
+            )
+        ";
+
+        // ==================================================================================
+        // 2. QUERY STATISTIK TIPE HAK
+        // ==================================================================================
+        $queryHak = DB::table('spatial_features')
+            ->select(
+                DB::raw("$hakExpression as label"),
+                DB::raw("COUNT(*) as total"),
+                DB::raw("SUM(ST_Area(geom::geography)) as luas_m2")
+            );
+
+        // Filter Layer
+        if ($layerId) {
+            $queryHak->where('layer_id', $layerId);
+        }
+
+        $statsHak = $queryHak
+            ->groupBy(DB::raw($hakExpression))
+            ->orderBy('total', 'desc')
+            ->get();
+
+        // ==================================================================================
+        // 3. QUERY STATISTIK PER DESA (LUAS ASET)
+        // ==================================================================================
+        $queryDesa = DB::table('spatial_features')
+            ->select(
+                DB::raw("$desaExpression as desa"),
+                DB::raw("COUNT(*) as total_bidang"),
+                DB::raw("SUM(ST_Area(geom::geography)) / 10000 as luas_hektar")
+            );
+
+        // Filter Layer
+        if ($layerId) {
+            $queryDesa->where('layer_id', $layerId);
+        }
         
-        // 2. Data statistik awal (opsional, jika ingin load default)
-        // Disini kita hanya kirim variabel $layers untuk view
-        return view('admin.statistic.index', compact('layers'));
+        $statsDesa = $queryDesa
+            ->groupBy(DB::raw($desaExpression))
+            ->havingRaw("$desaExpression != 'Tanpa Desa'")
+            ->orderBy('total_bidang', 'desc')
+            ->limit(20)
+            ->get();
+
+        // ==================================================================================
+        // 4. ANALISIS TUMPANG TINDIH (DATA DETAIL)
+        // ==================================================================================
+        $overlapQuery = DB::table('overlap_results');
+
+        // Filter Layer pada Overlap (Join ke spatial_features untuk cek layer_id aset pertama)
+        if ($layerId) {
+            $overlapQuery->join('spatial_features', 'overlap_results.id_1', '=', 'spatial_features.id')
+                         ->where('spatial_features.layer_id', $layerId)
+                         ->select('overlap_results.*');
+        }
+        
+        $overlaps = $overlapQuery->orderBy('luas_overlap', 'desc')->paginate(50); 
+
+        // Info Update Terakhir
+        $lastUpdate = DB::table('overlap_results')->latest('created_at')->value('created_at');
+        
+        // Total Luas Terpetakan
+        $totalLuasTerpetakan = $statsHak->sum('luas_m2') / 10000; 
+
+        // ==================================================================================
+        // 5. TOP 10 DESA DENGAN TUMPANG TINDIH TERBANYAK
+        // ==================================================================================
+        $queryTopOverlap = DB::table('overlap_results')
+            ->select(
+                'overlap_results.desa', 
+                DB::raw('COUNT(*) as total_kasus'), 
+                DB::raw('SUM(overlap_results.luas_overlap) as total_luas')
+            )
+            ->groupBy('overlap_results.desa')
+            ->orderBy('total_kasus', 'desc')
+            ->limit(10);
+
+        if ($layerId) {
+            $queryTopOverlap->join('spatial_features', 'overlap_results.id_1', '=', 'spatial_features.id')
+                            ->where('spatial_features.layer_id', $layerId);
+        }
+        
+        $topOverlapVillages = $queryTopOverlap->get();
+
+        return view('admin.statistic.index', compact(
+            'statsHak', 'statsDesa', 'overlaps', 'totalLuasTerpetakan', 
+            'layers', 'layerId', 'lastUpdate', 'topOverlapVillages'
+        ));
     }
 
-    // Fungsi AJAX untuk menampilkan data di tabel (Preview)
-    public function runAnalysis(Request $request)
+    // Trigger Job Background (Tetap Ada)
+    public function runAnalysis()
     {
-        // Gunakan helper untuk filter data
-        $data = $this->getFilteredData($request);
-        
-        // Render view partial menjadi string HTML
-        // Pastikan Anda sudah membuat view: resources/views/admin/statistic/table_partial.blade.php
-        $html = view('admin.statistic.table_partial', compact('data'))->render();
-        
-        return response()->json([
-            'status' => 'success', 
-            'html' => $html,
-            'count' => $data->count()
-        ]);
-    }
-
-    // Fungsi Baru: Export ke Excel (CSV)
-    public function export(Request $request)
-    {
-        // Ambil data yang sama persis dengan yang dilihat user
-        $data = $this->getFilteredData($request);
-        
-        $fileName = 'Data_Aset_GIS_' . date('Y-m-d_H-i') . '.csv';
-
-        $headers = [
-            "Content-type"        => "text/csv",
-            "Content-Disposition" => "attachment; filename=$fileName",
-            "Pragma"              => "no-cache",
-            "Cache-Control"       => "must-revalidate, post-check=0, pre-check=0",
-            "Expires"             => "0"
-        ];
-
-        // Callback untuk streaming file (hemat memori)
-        $callback = function() use ($data) {
-            $file = fopen('php://output', 'w');
-            
-            // Header CSV
-            fputcsv($file, ['No', 'Nama Aset', 'Layer', 'Status Hak', 'Kecamatan', 'Desa/Kelurahan', 'Luas (m2)', 'Penggunaan', 'Tanggal Input']);
-
-            // Isi Data Baris per Baris
-            foreach ($data as $index => $item) {
-                $props = json_decode($item->properties, true);
-                $raw = $props['raw_data'] ?? [];
-
-                // Ambil data detail dengan fallback
-                $hak = $raw['TIPEHAK'] ?? $raw['TIPE_HAK'] ?? $raw['HAK'] ?? '-';
-                $kec = $raw['KECAMATAN'] ?? '-';
-                $desa = $raw['KELURAHAN'] ?? $raw['DESA'] ?? '-';
-                $luas = $raw['LUASTERTUL'] ?? $raw['LUAS'] ?? 0;
-                $guna = $props['description'] ?? $raw['PENGGUNAAN'] ?? '-';
-
-                fputcsv($file, [
-                    $index + 1,
-                    $item->name,
-                    $item->layer->name ?? 'Tanpa Layer', // Ambil nama layer dari relasi
-                    $hak,
-                    $kec,
-                    $desa,
-                    $luas,
-                    $guna,
-                    $item->created_at->format('Y-m-d H:i')
-                ]);
-            }
-            fclose($file);
-        };
-
-        return response()->stream($callback, 200, $headers);
-    }
-
-    // Helper: Pusat Logika Filter (Agar konsisten antara View & Export)
-    private function getFilteredData(Request $request)
-    {
-        $query = SpatialFeature::query()->with('layer');
-
-        // 1. Filter Pencarian Nama
-        if ($request->filled('search')) {
-            $term = '%' . $request->search . '%';
-            $query->where('name', 'ILIKE', $term);
-        }
-
-        // 2. Filter Layer (Fitur Baru)
-        if ($request->filled('layer_id')) {
-            $query->where('layer_id', $request->layer_id);
-        }
-
-        // 3. Filter Kecamatan
-        if ($request->filled('kecamatan')) {
-            $kec = '%' . $request->kecamatan . '%';
-            $query->whereRaw("properties->'raw_data'->>'KECAMATAN' ILIKE ?", [$kec]);
-        }
-
-        // 4. Filter Tipe Hak
-        if ($request->filled('hak')) {
-            $hak = strtoupper($request->hak);
-            $query->where(function($q) use ($hak) {
-                $q->whereRaw("properties->'raw_data'->>'TIPEHAK' ILIKE ?", ['%'.$hak.'%'])
-                  ->orWhereRaw("properties->'raw_data'->>'TIPE_HAK' ILIKE ?", ['%'.$hak.'%'])
-                  ->orWhereRaw("properties->'raw_data'->>'HAK' ILIKE ?", ['%'.$hak.'%']);
-            });
-        }
-
-        // Ambil data terbaru
-        return $query->orderBy('created_at', 'desc')->get();
+        AnalyzeOverlapsJob::dispatch();
+        return back()->with('success', 'Analisis sedang berjalan di background. Mohon tunggu beberapa saat dan refresh halaman.');
     }
 }
