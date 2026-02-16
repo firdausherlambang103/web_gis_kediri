@@ -13,31 +13,37 @@ use RecursiveDirectoryIterator;
 
 class GisController extends Controller
 {
-    // --- Helper 1: Keyword Pencarian ---
+    // =========================================================================
+    // HELPER FUNCTIONS
+    // =========================================================================
+
+    // Helper: Keyword Pencarian Berdasarkan Tipe Hak
     private function getHakKeywords($kode) {
         if (!$kode) return [];
         $kode = strtoupper($kode);
         $keywords = [$kode]; 
         if ($kode == 'HM') { $keywords[] = 'Hak Milik'; $keywords[] = 'Milik'; }
         if ($kode == 'HGB') { $keywords[] = 'Hak Guna Bangunan'; $keywords[] = 'Guna Bangunan'; }
+        if ($kode == 'HGU') { $keywords[] = 'Hak Guna Usaha'; $keywords[] = 'Guna Usaha'; } // <--- Support HGU
         if ($kode == 'HP') { $keywords[] = 'Hak Pakai'; $keywords[] = 'Pakai'; }
         if ($kode == 'WAKAF') { $keywords[] = 'Wakaf'; }
         if ($kode == 'KOSONG' || $kode == 'TANPA HAK') { $keywords[] = 'Tanah Negara'; $keywords[] = 'Belum Ada Hak'; $keywords[] = 'null'; }
         return $keywords;
     }
 
-    // --- Helper 2: Deteksi Warna Otomatis ---
+    // Helper: Deteksi Warna Otomatis (Fallback jika database layer null)
     private function getHakColor($tipeHak) {
         $tipe = strtoupper($tipeHak ?? '');
         if (str_contains($tipe, 'HM') || str_contains($tipe, 'MILIK')) return '#28a745';      
         if (str_contains($tipe, 'HGB') || str_contains($tipe, 'GUNA BANGUNAN')) return '#ffc107'; 
+        if (str_contains($tipe, 'HGU') || str_contains($tipe, 'GUNA USAHA')) return '#fd7e14'; // <--- Support HGU
         if (str_contains($tipe, 'HP') || str_contains($tipe, 'PAKAI')) return '#17a2b8';      
         if (str_contains($tipe, 'WAKAF')) return '#ffffff';    
         if (str_contains($tipe, 'HPL') || str_contains($tipe, 'PENGELOLAAN')) return '#6f42c1';   
         return '#6c757d'; 
     }
 
-    // --- Helper: Hapus Folder Temporary ---
+    // Helper: Hapus Folder Temporary
     private function deleteDirectory($dir) {
         if (!file_exists($dir)) return true;
         if (!is_dir($dir)) return unlink($dir);
@@ -124,11 +130,30 @@ class GisController extends Controller
                     $props = $item->properties ?? [];
                     
                     $finalColor = '#3388ff';
+                    
                     if ($item->layer) {
+                        // CEK LOGIKA WARNA DINAMIS
                         if (($item->layer->mode ?? 'standard') === 'auto_hak') {
-                            $tipeHak = $props['raw_data']['TIPEHAK'] ?? $props['raw_data']['TIPE_HAK'] ?? '';
-                            $finalColor = $this->getHakColor($tipeHak);
+                            
+                            $tipeHak = strtoupper($props['raw_data']['TIPEHAK'] ?? $props['raw_data']['TIPE_HAK'] ?? '');
+                            
+                            // Ambil warna dari settingan database layer
+                            if (str_contains($tipeHak, 'HM') || str_contains($tipeHak, 'MILIK')) {
+                                $finalColor = $item->layer->color_hm ?? '#28a745';
+                            } elseif (str_contains($tipeHak, 'HGB') || str_contains($tipeHak, 'GUNA BANGUNAN')) {
+                                $finalColor = $item->layer->color_hgb ?? '#ffc107';
+                            } elseif (str_contains($tipeHak, 'HGU') || str_contains($tipeHak, 'GUNA USAHA')) { // <--- HGU
+                                $finalColor = $item->layer->color_hgu ?? '#fd7e14';
+                            } elseif (str_contains($tipeHak, 'HP') || str_contains($tipeHak, 'PAKAI')) {
+                                $finalColor = $item->layer->color_hp ?? '#17a2b8';
+                            } elseif (str_contains($tipeHak, 'WAKAF')) {
+                                $finalColor = $item->layer->color_wakaf ?? '#6f42c1';
+                            } else {
+                                // Tanah Negara / Kosong
+                                $finalColor = $item->layer->color_tn ?? '#6c757d';
+                            }
                         } else {
+                            // Mode Standard
                             $finalColor = $item->layer->color;
                         }
                     }
@@ -145,7 +170,7 @@ class GisController extends Controller
     }
 
     // =========================================================================
-    // UPLOAD LOGIC (ALL DATA ENTRY FOR FIRST UPLOAD)
+    // UPLOAD LOGIC (SMART UPLOAD: ALLOW ALL ON FIRST, CHECK DB ON SUBSEQUENT)
     // =========================================================================
 
     public function storeShp(Request $request)
@@ -295,13 +320,13 @@ class GisController extends Controller
                     }
                     $mode = $kecamatanModes[$kecamatan];
 
-                    // --- LOGIKA UTAMA (PERBAIKAN: MODE FIRST = LOLOS SEMUA) ---
+                    // --- LOGIKA UTAMA ---
                     if ($uniqueKey) {
                         
                         // JIKA MODE = SUBSEQUENT (KECAMATAN SUDAH ADA / UPLOAD KEDUA)
                         if ($mode === 'SUBSEQUENT') {
                             
-                            // 1. Cek Duplikat Internal (Agar tidak update berkali-kali di sesi yang sama)
+                            // 1. Cek Duplikat Internal
                             if (isset($localProcessed[$uniqueKey])) {
                                 $stats['skipped']++; 
                                 continue; 
@@ -324,8 +349,7 @@ class GisController extends Controller
                         }
                         
                         // JIKA MODE = FIRST (KECAMATAN BARU / UPLOAD PERTAMA)
-                        // -> KITA LEWATI SEMUA CEK DUPLIKAT (INTERNAL MAUPUN DB)
-                        // -> SEMUA DATA AKAN LANGSUNG MASUK KE INSERT
+                        // -> LANGSUNG INSERT SEMUA (ALLOW DUPLICATE FILE)
                     }
 
                     // --- INSERT ---
@@ -482,5 +506,18 @@ class GisController extends Controller
     public function destroy($id) {
         try { DB::table('spatial_features')->delete($id); return response()->json(['status' => 'success', 'message' => 'Data berhasil dihapus!']); } 
         catch (\Exception $e) { return response()->json(['status' => 'error', 'message' => $e->getMessage()], 500); }
+    }
+
+    // --- Update Warna Layer via Ajax (Fitur Color Picker di Peta) ---
+    public function updateLayerColor(Request $request)
+    {
+        $request->validate([
+            'id' => 'required|exists:layers,id',
+            'color' => 'required|string|max:7'
+        ]);
+
+        Layer::where('id', $request->id)->update(['color' => $request->color]);
+
+        return response()->json(['status' => 'success', 'message' => 'Warna layer diperbarui']);
     }
 }

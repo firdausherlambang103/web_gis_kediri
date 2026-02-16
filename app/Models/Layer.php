@@ -9,19 +9,23 @@ class Layer extends Model
 {
     use HasFactory;
 
-    protected $table = 'layers';
-    
     protected $fillable = [
-        'name',
-        'color',
-        'description',
-        'is_active',
-        'mode' // <--- Tambahkan ini
+        'name', 
+        'color', 
+        'description', 
+        'is_active', 
+        'mode', // 'standard' atau 'auto_hak' (Layer Utama)
+        // Tambahan Warna Dinamis
+        'color_hm',
+        'color_hgb',
+        'color_hp',
+        'color_wakaf',
+        'color_hgu',
+        'color_tn'
     ];
 
-    // Relasi ke SpatialFeature (Data Aset)
     public function features()
     {
-        return $this->hasMany(SpatialFeature::class, 'layer_id');
+        return $this->hasMany(SpatialFeature::class);
     }
 }

@@ -3,7 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\GisController;
 use App\Http\Controllers\StatisticController;
-use App\Http\Controllers\LayerController; // <-- Tambahkan Controller Baru
+use App\Http\Controllers\LayerController; 
 
 /*
 |--------------------------------------------------------------------------
@@ -34,17 +34,20 @@ Route::controller(GisController::class)->group(function () {
     Route::delete('/asset/{id}', 'destroy')->name('asset.destroy');     // Hapus Aset
 
     // 4. Manajemen Layer (AJAX di Peta)
-    // Route ini tetap ada untuk mendukung fitur "Tambah Layer" langsung dari peta
     Route::post('/layer', 'storeLayer')->name('layer.store');           
     Route::get('/layers', 'getLayers')->name('layer.get');              
+    
+    // --- TAMBAHAN BARU: Update Warna Layer via AJAX ---
+    // Ini diperlukan agar color picker di peta bisa menyimpan perubahan ke database
+    Route::post('/layer/update-color', 'updateLayerColor')->name('layer.updateColor');
 });
 
 // Group Route untuk Master Data Layer (Halaman Khusus Management)
-// Ini route baru untuk halaman CRUD Master Layer
 Route::resource('master-layer', LayerController::class)->except(['create', 'show', 'edit']);
 
 // Group Route untuk Statistik & Analisis
 Route::controller(StatisticController::class)->group(function () {
     Route::get('/statistics', 'index')->name('statistics.index');
     Route::post('/statistics/run', 'runAnalysis')->name('statistics.run');
+    Route::get('/statistics/export', 'export')->name('statistics.export');
 });

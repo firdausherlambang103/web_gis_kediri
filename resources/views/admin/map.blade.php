@@ -26,7 +26,7 @@
             position: absolute; top: 280px; right: 10px; z-index: 1000;
             background: rgba(255, 255, 255, 0.95); padding: 10px; border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.2); width: 280px; 
-            max-height: 300px; overflow-y: auto;
+            max-height: 400px; overflow-y: auto;
             backdrop-filter: blur(5px);
         }
 
@@ -43,6 +43,14 @@
         
         .progress-group { display: none; margin-top: 15px; }
         .upload-log { max-height: 150px; overflow-y: auto; font-size: 0.85rem; margin-top: 10px; border: 1px solid #ddd; padding: 5px; background: #f9f9f9; }
+
+        /* Style untuk Color Picker Layer */
+        input[type="color"].layer-color-input {
+            -webkit-appearance: none; border: none; width: 20px; height: 20px; 
+            padding: 0; background: none; cursor: pointer; border-radius: 50%; overflow: hidden;
+        }
+        input[type="color"].layer-color-input::-webkit-color-swatch-wrapper { padding: 0; }
+        input[type="color"].layer-color-input::-webkit-color-swatch { border: 1px solid #ccc; border-radius: 50%; }
     </style>
 @endpush
 
@@ -90,20 +98,36 @@
         <h6 class="font-weight-bold mb-2"><i class="fas fa-layer-group text-primary"></i> Layer Aktif</h6>
         <div id="layerList" class="mb-2">
             @forelse($layers as $layer)
-            <div class="custom-control custom-checkbox mb-1">
-                <input type="checkbox" class="custom-control-input layer-checkbox" 
-                       id="layer_{{ $layer->id }}" value="{{ $layer->id }}" checked
-                       data-color="{{ $layer->color }}">
-                <label class="custom-control-label small" for="layer_{{ $layer->id }}">
-                    <span class="badge badge-dot mr-1" style="background-color: {{ $layer->color }}; width: 10px; height: 10px; display: inline-block; border-radius: 50%;"></span>
-                    {{ $layer->name }}
-                </label>
+            <div class="d-flex align-items-center justify-content-between mb-1">
+                <div class="custom-control custom-checkbox">
+                    <input type="checkbox" class="custom-control-input layer-checkbox" 
+                           id="layer_{{ $layer->id }}" value="{{ $layer->id }}" checked
+                           data-color="{{ $layer->color }}">
+                    <label class="custom-control-label small" for="layer_{{ $layer->id }}">
+                        {{ $layer->name }}
+                    </label>
+                </div>
+                {{-- Color Picker Input --}}
+                <input type="color" class="layer-color-input" 
+                       value="{{ $layer->color }}" 
+                       data-id="{{ $layer->id }}" 
+                       title="Ubah Warna Layer">
             </div>
             @empty
                 <p class="text-muted small">Belum ada layer.</p>
             @endforelse
         </div>
-        <button class="btn btn-xs btn-outline-primary btn-block" data-toggle="modal" data-target="#modalAddLayer">
+        
+        {{-- Opacity Slider --}}
+        <div class="form-group border-top pt-2 mt-2">
+            <label class="small font-weight-bold mb-0 d-flex justify-content-between">
+                <span>Transparansi</span>
+                <span id="opacityVal">60%</span>
+            </label>
+            <input type="range" class="custom-range" id="opacitySlider" min="0" max="1" step="0.1" value="0.6">
+        </div>
+
+        <button class="btn btn-xs btn-outline-primary btn-block mt-2" data-toggle="modal" data-target="#modalAddLayer">
             <i class="fas fa-plus mr-1"></i> Buat Layer Baru
         </button>
     </div>
@@ -111,7 +135,7 @@
     <div id="map"></div>
 </div>
 
-{{-- Modal Upload --}}
+{{-- Modal Upload (Sama seperti sebelumnya) --}}
 <div class="modal fade" id="uploadModal" data-backdrop="static">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -304,7 +328,43 @@
         L.marker([startLat, startLng]).addTo(map).bindPopup("<b>Lokasi Terpilih</b><br>" + (paramSearch || "")).openPopup();
     }
 
-    // === 3. MANAJEMEN LAYER ===
+    // === 3. MANAJEMEN LAYER & WARNA & OPACITY ===
+    
+    // Fitur: Update Warna Layer saat Color Picker berubah
+    $('.layer-color-input').on('change', function() {
+        var id = $(this).data('id');
+        var newColor = $(this).val();
+        
+        // Update di database
+        $.post("{{ route('layer.updateColor') }}", {
+            _token: "{{ csrf_token() }}",
+            id: id,
+            color: newColor
+        }, function(res) {
+            if(res.status == 'success') {
+                // Update atribut data checkbox agar loadData() memakai warna baru
+                $('#layer_' + id).data('color', newColor);
+                // Refresh peta
+                loadData();
+            }
+        });
+    });
+
+    // Fitur: Opacity Slider
+    var currentOpacity = 0.6;
+    $('#opacitySlider').on('input', function() {
+        currentOpacity = $(this).val();
+        $('#opacityVal').text(Math.round(currentOpacity * 100) + '%');
+        
+        // Update style layer yang sudah ada tanpa reload
+        geoJsonLayer.eachLayer(function(layer) {
+            // Hanya ubah opacity jika itu adalah Polygon/Bidang (bukan marker)
+            if (layer.options && layer.options.fill) {
+                layer.setStyle({ fillOpacity: currentOpacity });
+            }
+        });
+    });
+
     function createNewLayer() {
         var name = $('#newLayerName').val();
         var color = $('#newLayerColor').val();
@@ -366,13 +426,18 @@
 
     // === 5. LOAD DATA & VISUALISASI ===
     function getColor(props) {
+        // Prioritas Warna: 
+        // 1. Warna Manual per Item
+        // 2. Warna Layer (dari database)
+        // 3. Warna Default
+        
         if (props.color && props.color !== '#ff0000') return props.color;
         if (props.layer_color) return props.layer_color;
         
+        // Fallback Logic Hak
         var raw = props.raw_data || {};
         var tipe = raw.TIPEHAK || raw.TIPE_HAK || 'Import';
         tipe = tipe.toString().toUpperCase();
-        
         if (tipe.includes('HM') || tipe.includes('MILIK')) return '#28a745';
         if (tipe.includes('HGB') || tipe.includes('BANGUNAN')) return '#ffc107';
         if (tipe.includes('HP') || tipe.includes('PAKAI')) return '#17a2b8';
@@ -384,7 +449,8 @@
     var geoJsonLayer = L.geoJSON(null, {
         style: function(feature) {
             var col = getColor(feature.properties || {});
-            return { color: col, fillColor: col, weight: 1, opacity: 1, fillOpacity: 0.6 };
+            // Gunakan currentOpacity global
+            return { color: col, fillColor: col, weight: 1, opacity: 1, fillOpacity: currentOpacity };
         },
         pointToLayer: function(feature, latlng) {
             if (feature.properties.type === 'cluster') {
@@ -401,7 +467,8 @@
                 layer.on('click', function(e) {
                     if (selectedLayer) geoJsonLayer.resetStyle(selectedLayer);
                     selectedLayer = e.target;
-                    selectedLayer.setStyle({ color: '#ff0000', weight: 3, fillOpacity: 0.8 });
+                    // Highlight selected
+                    selectedLayer.setStyle({ color: '#ff0000', weight: 3, fillOpacity: 0.9 });
                     selectedLayer.bringToFront();
                 });
 
@@ -467,7 +534,7 @@
     map.on('moveend', loadData); 
     loadData();
 
-    // === 6. UPLOAD LOGIC (FIXED: AJAX & JSON Handling) ===
+    // === 6. UPLOAD LOGIC ===
     var selectedFiles = [];
     $('#shpFilesInput').on('change', function() {
         selectedFiles = Array.from($(this)[0].files);
@@ -504,7 +571,7 @@
                     headers: { 
                         'X-CSRF-TOKEN': '{{ csrf_token() }}', 
                         'Accept': 'application/json',
-                        'X-Requested-With': 'XMLHttpRequest' // PERBAIKAN: Header Wajib
+                        'X-Requested-With': 'XMLHttpRequest'
                     }, 
                     body: formData 
                 });
@@ -513,15 +580,13 @@
                 let result;
 
                 try {
-                    result = JSON.parse(responseText); // Coba parse JSON
+                    result = JSON.parse(responseText); 
                 } catch (e) {
-                    console.error("Server Error HTML:", responseText);
-                    throw new Error("Server Crash / Error 500 (Lihat Console)");
+                    throw new Error("Server Error HTML: " + responseText);
                 }
                 
                 if (response.ok) {
                     successCount++; 
-                    // Tampilkan Statistik Sukses (Total, Insert, Skip)
                     let statsMsg = result.message || 'Berhasil diupload';
                     $('#uploadLog').append(`<div class="text-success small border-bottom py-1"><i class="fas fa-check-circle"></i> <b>${file.name}</b>: ${statsMsg}</div>`);
                 } else { 
@@ -531,9 +596,9 @@
                     $('#uploadLog').append(`<div class="text-danger small border-bottom py-1"><i class="fas fa-times-circle"></i> <b>${file.name}</b>: ${msg}</div>`); 
                 }
             } catch (error) { 
-                console.error(error);
                 failCount++; 
-                let errorMsg = error.message || "Masalah Koneksi / Server Timeout";
+                let errorMsg = error.message || "Masalah Koneksi";
+                if(errorMsg.includes("Server Error")) errorMsg = "Server Error (Cek Console)";
                 errorDetails.push(`<b>${file.name}</b>: <span class="text-danger">${errorMsg}</span>`);
                 $('#uploadLog').append(`<div class="text-danger small"><i class="fas fa-exclamation-triangle"></i> ${file.name}: ${errorMsg}</div>`); 
             }
@@ -549,23 +614,21 @@
             Swal.fire({
                 title: 'Proses Selesai',
                 icon: 'warning',
-                width: 700,
                 html: `
                     <div class="text-left">
-                        <p class="mb-2">
-                            <span class="badge badge-success p-2">Berhasil: ${successCount}</span>
-                            <span class="badge badge-warning p-2">Gagal: ${failCount}</span>
-                        </p>
-                        <div class="card bg-light">
-                            <div class="card-body p-2" style="max-height: 200px; overflow-y: auto; font-size: 0.85rem; text-align: left;">
-                                ${errorDetails.join('<hr class="my-1">')}
-                            </div>
+                        <p class="mb-2"><b>Hasil Upload:</b></p>
+                        <ul class="small">
+                            <li class="text-success">Berhasil: ${successCount} file</li>
+                            <li class="text-danger">Gagal: ${failCount} file</li>
+                        </ul>
+                        <div class="alert alert-secondary small p-2">
+                            Detail error dapat dilihat pada kotak log di bawah tombol upload.
                         </div>
                     </div>
                 `
             });
         } else {
-            Swal.fire('Sukses', `Berhasil upload ${successCount} file! Cek Log di bawah untuk detail statistik.`, 'success');
+            Swal.fire('Sukses', `Berhasil upload ${successCount} file!`, 'success');
         }
     }
     
