@@ -37,7 +37,21 @@ class GisController extends Controller
         return '#6c757d'; 
     }
 
-    // --- Page & API ---
+    // --- Helper: Hapus Folder Temporary ---
+    private function deleteDirectory($dir) {
+        if (!file_exists($dir)) return true;
+        if (!is_dir($dir)) return unlink($dir);
+        foreach (scandir($dir) as $item) {
+            if ($item == '.' || $item == '..') continue;
+            if (!$this->deleteDirectory($dir . DIRECTORY_SEPARATOR . $item)) return false;
+        }
+        return rmdir($dir);
+    }
+
+    // =========================================================================
+    // VIEW & API METHODS
+    // =========================================================================
+
     public function index(Request $request)
     {
         $layers = Layer::where('is_active', true)->get();
@@ -49,7 +63,6 @@ class GisController extends Controller
 
     public function apiData(Request $request)
     {
-        // Validasi parameter viewport peta
         if (!$request->has(['north', 'south', 'east', 'west', 'zoom'])) {
             return response()->json(['type' => 'FeatureCollection', 'features' => []]);
         }
@@ -61,21 +74,19 @@ class GisController extends Controller
             $hak = $request->input('hak');
             $layerIds = $request->input('layers'); 
 
-            // Membuat kotak area (Bounding Box) untuk query spatial
             $polygonWKT = sprintf("SRID=4326;POLYGON((%s %s, %s %s, %s %s, %s %s, %s %s))", $w, $s, $e, $s, $e, $n, $w, $n, $w, $s);
             $features = [];
             $strategy = '';
 
-            // MODE CLUSTER (Zoom Jauh) - Menampilkan titik saja agar ringan
+            // MODE CLUSTER (Zoom Jauh)
             if ($zoom < 14 && empty($search) && empty($hak) && empty($layerIds)) {
                 $strategy = 'cluster';
                 $gridSize = $zoom < 10 ? 0.05 : 0.005;
                 $gridSizeStr = number_format($gridSize, 5, '.', ''); 
                 
-                // Gunakan && operator untuk memanfaatkan Spatial Index
                 $clusters = DB::table('spatial_features')
                     ->select(DB::raw("COUNT(id) as total"), DB::raw("ST_AsGeoJSON(ST_Centroid(ST_Collect(geom::geometry))) as center"))
-                    ->whereRaw("geom && ST_GeomFromEWKT(?)", [$polygonWKT]) 
+                    ->whereRaw("geom && ST_GeomFromEWKT(?)", [$polygonWKT])
                     ->groupByRaw("ST_SnapToGrid(ST_Centroid(geom::geometry), $gridSizeStr)")
                     ->get();
 
@@ -87,7 +98,7 @@ class GisController extends Controller
                     ];
                 }
             } 
-            // MODE DETAIL (Zoom Dekat) - Menampilkan geometri asli/disederhanakan
+            // MODE DETAIL (Zoom Dekat)
             else {
                 $query = SpatialFeature::query()->with('layer')->whereRaw("geom && ST_GeomFromEWKT(?)", [$polygonWKT]);
                 
@@ -101,7 +112,6 @@ class GisController extends Controller
                     $query->where(function($q) use ($keywords) { foreach ($keywords as $word) $q->orWhereRaw("properties::text ILIKE ?", ['%' . $word . '%']); });
                 }
 
-                // Simplifikasi geometri jika zoom belum terlalu dekat untuk performa
                 $selectGeom = ($zoom > 16 || !empty($search) || !empty($hak)) 
                     ? "ST_AsGeoJSON(geom)" 
                     : "ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom::geometry, 0.00005))";
@@ -113,8 +123,15 @@ class GisController extends Controller
                     if (!$item->geometry) continue;
                     $props = $item->properties ?? [];
                     
-                    // Tentukan warna berdasarkan Layer atau Hak
-                    $finalColor = $item->layer ? ($item->layer->mode === 'auto_hak' ? $this->getHakColor($props['raw_data']['TIPEHAK'] ?? '') : $item->layer->color) : '#3388ff';
+                    $finalColor = '#3388ff';
+                    if ($item->layer) {
+                        if (($item->layer->mode ?? 'standard') === 'auto_hak') {
+                            $tipeHak = $props['raw_data']['TIPEHAK'] ?? $props['raw_data']['TIPE_HAK'] ?? '';
+                            $finalColor = $this->getHakColor($tipeHak);
+                        } else {
+                            $finalColor = $item->layer->color;
+                        }
+                    }
                     $props['layer_color'] = $finalColor; 
 
                     $features[] = [
@@ -127,20 +144,22 @@ class GisController extends Controller
         } catch (\Exception $e) { return response()->json(['error'=>$e->getMessage()], 500); }
     }
 
-    // --- IMPORT SHP (VERSI STABIL: UNLIMITED MEMORY & TIME) ---
+    // =========================================================================
+    // UPLOAD LOGIC (ALL DATA ENTRY FOR FIRST UPLOAD)
+    // =========================================================================
+
     public function storeShp(Request $request)
     {
         Log::info('--- MEMULAI UPLOAD SHP ---'); 
 
-        // 1. SETTING PHP EKSTREM (Wajib untuk 1 Juta Data)
-        set_time_limit(0);           // Waktu eksekusi tidak terbatas
-        ini_set('memory_limit', '-1'); // Gunakan semua RAM yang tersedia
+        // 1. Setup PHP Limit
+        set_time_limit(0);              
+        ini_set('memory_limit', '1024M'); 
         ini_set('max_execution_time', 0);
-        DB::disableQueryLog();       // Matikan pencatatan query Laravel agar hemat RAM
+        DB::disableQueryLog();          
 
         $request->validate([
             'shp_files' => 'required', 
-            // Validasi ukuran di sini hanya formalitas, server (Nginx/PHP) yang memegang kendali utama
             'shp_files.*' => 'file', 
             'layer_id' => 'nullable|exists:layers,id'
         ]);
@@ -149,25 +168,25 @@ class GisController extends Controller
         if (!is_array($files)) $files = [$files];
         $layerId = $request->layer_id;
 
-        $insertedCount = 0; $updatedCount = 0; $failedInfo = [];
+        $stats = [
+            'processed' => 0, 'inserted' => 0, 
+            'updated' => 0, 'skipped' => 0
+        ];
+        $failedInfo = [];
 
-        // --- DETEKSI OS & PATH GDAL USER ---
+        // 2. Deteksi Path GDAL
         $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
         $envPrefix = "";
         $ogr2ogrCmd = "ogr2ogr"; 
 
         if ($isWindows) {
-            // Path spesifik user MasterD
             $userOsGeoPath = 'C:\\Users\\MasterD\\AppData\\Local\\Programs\\OSGeo4W';
-            
             if (is_dir($userOsGeoPath)) {
                 $projLibPath = $userOsGeoPath . '\\share\\proj';
                 if (file_exists($projLibPath . '\\proj.db')) $envPrefix = "set \"PROJ_LIB={$projLibPath}\" && ";
-                
                 $exePath = $userOsGeoPath . '\\bin\\ogr2ogr.exe';
                 if (file_exists($exePath)) $ogr2ogrCmd = '"' . $exePath . '"'; 
             } else {
-                // Fallback ke Environment Variable
                 $projLibPath = env('GDAL_PROJ_LIB');
                 if ($projLibPath) $envPrefix = "set \"PROJ_LIB={$projLibPath}\" && ";
             }
@@ -175,22 +194,22 @@ class GisController extends Controller
 
         foreach ($files as $file) {
             $originalName = $file->getClientOriginalName();
-            Log::info("Memproses file: " . $originalName); 
-
             $uniqueId = uniqid('shp_', true);
             $extractPath = storage_path('app/temp_shp/' . $uniqueId);
             
             try {
                 if (!file_exists($extractPath)) mkdir($extractPath, 0777, true);
                 
+                // Ekstrak ZIP
                 $zip = new ZipArchive;
                 if ($zip->open($file->getPathname()) === TRUE) { 
                     $zip->extractTo($extractPath); 
                     $zip->close(); 
                 } else { 
-                    throw new \Exception('Gagal ekstrak ZIP. Pastikan file valid.'); 
+                    throw new \Exception('Gagal ekstrak ZIP.'); 
                 }
 
+                // Cari File .shp
                 $shpFiles = [];
                 $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($extractPath));
                 foreach ($iterator as $info) {
@@ -198,93 +217,141 @@ class GisController extends Controller
                         $shpFiles[] = $info->getPathname();
                     }
                 }
-                if (empty($shpFiles)) throw new \Exception('File .shp tidak ditemukan dalam ZIP.');
+                if (empty($shpFiles)) throw new \Exception('File .shp tidak ditemukan.');
                 
                 $shpFile = $shpFiles[0];
                 $geojsonFile = $extractPath . '/output.json';
                 
-                // Konversi SHP -> GeoJSON menggunakan GDAL
+                // Konversi SHP ke GeoJSONSeq
                 $cmd = $isWindows 
-                    ? "{$envPrefix}{$ogr2ogrCmd} -f GeoJSON -dim XY -t_srs EPSG:4326 -skipfailures \"{$geojsonFile}\" \"{$shpFile}\" 2>&1"
-                    : "ogr2ogr -f GeoJSON -dim XY -t_srs EPSG:4326 -skipfailures \"{$geojsonFile}\" \"{$shpFile}\" 2>&1";
+                    ? "{$envPrefix}{$ogr2ogrCmd} -f GeoJSONSeq -dim XY -t_srs EPSG:4326 -skipfailures \"{$geojsonFile}\" \"{$shpFile}\" 2>&1"
+                    : "ogr2ogr -f GeoJSONSeq -dim XY -t_srs EPSG:4326 -skipfailures \"{$geojsonFile}\" \"{$shpFile}\" 2>&1";
                 
                 $output = [];
                 exec($cmd, $output, $returnVar);
 
                 if (!file_exists($geojsonFile) || filesize($geojsonFile) < 10) {
-                    throw new \Exception("Gagal konversi GDAL. Cek Log.");
+                    $cmd = str_replace('GeoJSONSeq', 'GeoJSON', $cmd);
+                    exec($cmd, $output, $returnVar);
+                    if (!file_exists($geojsonFile) || filesize($geojsonFile) < 10) throw new \Exception("Gagal konversi GDAL.");
                 }
 
-                // 2. BACA GEOJSON (Chunking manual jika bisa, atau decode full jika memory cukup)
-                // Karena kita sudah set memory_limit -1, json_decode aman untuk file < 500MB
-                $jsonContent = file_get_contents($geojsonFile);
-                $geoData = json_decode($jsonContent, true);
-                unset($jsonContent); // Bebaskan RAM string JSON
-                
-                if (!isset($geoData['features'])) throw new \Exception('JSON hasil konversi invalid.');
+                $handle = fopen($geojsonFile, "r");
+                if (!$handle) throw new \Exception("Gagal membuka hasil konversi.");
 
-                // 3. INDEXING DATA LAMA (Untuk Update Cepat)
-                // Hanya ambil kolom ID dan NIB untuk menghemat memori
+                // 3. Load Index DB (Hanya untuk Cek Update jika Mode SUBSEQUENT)
                 $existingMap = DB::table('spatial_features')
                     ->where('layer_id', $layerId)
-                    ->select('id', DB::raw("properties->'raw_data'->>'NIB' as nib"))
-                    ->pluck('id', 'nib')
+                    ->select('id', DB::raw("properties->'raw_data'->>'NIB' as nib"), DB::raw("properties->'raw_data'->>'ID' as raw_id"))
+                    ->get()
+                    ->mapWithKeys(function ($item) {
+                        $key = $item->nib ?: ($item->raw_id ?: null);
+                        return $key ? [(string)$key => $item->id] : [];
+                    })
                     ->toArray();
 
-                // 4. PROSES DALAM BATCH
-                $batchSize = 250; // Ukuran batch aman
-                $chunks = array_chunk($geoData['features'], $batchSize);
-                unset($geoData); // Bebaskan RAM array besar
-                gc_collect_cycles(); // Paksa Garbage Collector
+                $kecamatanModes = []; // Cache Status Kecamatan
+                $localProcessed = []; // Cache Duplikat Internal
 
-                foreach ($chunks as $chunk) {
-                    $insertData = [];
-                    $updateIds = []; // Simpan ID untuk update manual satu-satu (lebih aman daripada complex query)
+                $batchData = [];
+                $batchSize = 500; 
+                
+                while (($line = fgets($handle)) !== false) {
+                    $line = trim($line);
+                    if (empty($line)) continue;
+                    $line = rtrim($line, ',');
+                    if ($line == '[' || $line == ']' || $line == '{' || $line == '}' || substr($line, 0, 10) == '"type":') continue;
 
-                    foreach ($chunk as $feature) {
-                        if (!isset($feature['geometry'])) continue;
-
-                        $props = $feature['properties'] ?? [];
-                        $nib = isset($props['NIB']) ? (string)$props['NIB'] : null;
-                        
-                        $name = $nib ?? ($props['ID'] ?? 'Aset Import');
-                        $geomJson = json_encode($feature['geometry']);
-                        $now = now()->toDateTimeString();
-
-                        // Cek Duplikat
-                        if ($nib && isset($existingMap[$nib])) {
-                            // Update
-                            DB::table('spatial_features')->where('id', $existingMap[$nib])->update([
-                                'name' => $name,
-                                'properties' => json_encode(['type' => 'Imported', 'raw_data' => $props]),
-                                'geom' => DB::raw("ST_Force2D(ST_SetSRID(ST_GeomFromGeoJSON('$geomJson'), 4326))"),
-                                'updated_at' => $now
-                            ]);
-                            $updatedCount++;
-                        } else {
-                            // Insert
-                            $insertData[] = [
-                                'name' => $name,
-                                'layer_id' => $layerId,
-                                'properties' => json_encode(['type' => 'Imported', 'raw_data' => $props]),
-                                'geom' => DB::raw("ST_Force2D(ST_SetSRID(ST_GeomFromGeoJSON('$geomJson'), 4326))"),
-                                'created_at' => $now,
-                                'updated_at' => $now
-                            ];
-                        }
-                    }
-
-                    // Eksekusi Bulk Insert
-                    if (!empty($insertData)) {
-                        DB::table('spatial_features')->insert($insertData);
-                        $insertedCount += count($insertData);
-                    }
+                    $feature = json_decode($line, true);
+                    if (!$feature) continue;
                     
-                    unset($insertData);
-                    gc_collect_cycles();
+                    $stats['processed']++; 
+
+                    if (!isset($feature['geometry']) || empty($feature['geometry'])) {
+                        $stats['skipped']++; continue;
+                    }
+
+                    $props = $feature['properties'] ?? [];
+                    $nib = isset($props['NIB']) ? (string)$props['NIB'] : null;
+                    $checkId = isset($props['ID']) ? (string)$props['ID'] : null;
+                    $kecamatan = isset($props['KECAMATAN']) ? strtoupper(trim($props['KECAMATAN'])) : 'UNKNOWN';
+                    
+                    $name = $nib ?? ($checkId ?? 'Aset Import');
+                    $geomJson = json_encode($feature['geometry']);
+                    if ($geomJson == 'null' || !$geomJson) { $stats['skipped']++; continue; }
+
+                    $now = now()->toDateTimeString();
+                    $uniqueKey = $nib ?: $checkId;
+
+                    // --- CEK MODE KECAMATAN ---
+                    if (!isset($kecamatanModes[$kecamatan])) {
+                        // Cek apakah kecamatan ini sudah ada di DB?
+                        $existsInDb = DB::table('spatial_features')
+                            ->where('layer_id', $layerId)
+                            ->whereRaw("properties->'raw_data'->>'KECAMATAN' ILIKE ?", [$kecamatan])
+                            ->exists();
+                        
+                        $kecamatanModes[$kecamatan] = $existsInDb ? 'SUBSEQUENT' : 'FIRST';
+                    }
+                    $mode = $kecamatanModes[$kecamatan];
+
+                    // --- LOGIKA UTAMA (PERBAIKAN: MODE FIRST = LOLOS SEMUA) ---
+                    if ($uniqueKey) {
+                        
+                        // JIKA MODE = SUBSEQUENT (KECAMATAN SUDAH ADA / UPLOAD KEDUA)
+                        if ($mode === 'SUBSEQUENT') {
+                            
+                            // 1. Cek Duplikat Internal (Agar tidak update berkali-kali di sesi yang sama)
+                            if (isset($localProcessed[$uniqueKey])) {
+                                $stats['skipped']++; 
+                                continue; 
+                            }
+                            $localProcessed[$uniqueKey] = true;
+
+                            // 2. Cek DB untuk Update
+                            if (isset($existingMap[$uniqueKey])) {
+                                DB::table('spatial_features')
+                                    ->where('id', $existingMap[$uniqueKey])
+                                    ->update([
+                                        'name' => $name,
+                                        'properties' => json_encode(['type' => 'Imported', 'raw_data' => $props]),
+                                        'geom' => DB::raw("ST_Force2D(ST_SetSRID(ST_GeomFromGeoJSON('$geomJson'), 4326))"),
+                                        'updated_at' => $now
+                                    ]);
+                                $stats['updated']++;
+                                continue; 
+                            }
+                        }
+                        
+                        // JIKA MODE = FIRST (KECAMATAN BARU / UPLOAD PERTAMA)
+                        // -> KITA LEWATI SEMUA CEK DUPLIKAT (INTERNAL MAUPUN DB)
+                        // -> SEMUA DATA AKAN LANGSUNG MASUK KE INSERT
+                    }
+
+                    // --- INSERT ---
+                    $batchData[] = [
+                        'name' => $name,
+                        'layer_id' => $layerId,
+                        'properties' => json_encode(['type' => 'Imported', 'raw_data' => $props]),
+                        'geom' => DB::raw("ST_Force2D(ST_SetSRID(ST_GeomFromGeoJSON('$geomJson'), 4326))"),
+                        'created_at' => $now,
+                        'updated_at' => $now
+                    ];
+                    $stats['inserted']++;
+
+                    if (count($batchData) >= $batchSize) {
+                        DB::table('spatial_features')->insert($batchData);
+                        $batchData = []; 
+                        gc_collect_cycles();
+                    }
                 }
 
-                Log::info("Sukses file: " . $originalName . ". Insert: $insertedCount, Update: $updatedCount");
+                if (!empty($batchData)) {
+                    DB::table('spatial_features')->insert($batchData);
+                }
+
+                fclose($handle);
+                Log::info("File: $originalName. Stats: " . json_encode($stats));
 
             } catch (\Exception $e) {
                 Log::error("Error file " . $originalName . ": " . $e->getMessage());
@@ -296,22 +363,18 @@ class GisController extends Controller
 
         if ($request->ajax()) {
             if (count($failedInfo) > 0) return response()->json(['status' => 'partial_error', 'message' => implode(' | ', $failedInfo)], 422);
-            return response()->json(['status' => 'success', 'message' => "Selesai! Baru: $insertedCount, Update: $updatedCount"]);
+            
+            $msg = "Selesai! Total: {$stats['processed']}. Baru: {$stats['inserted']}. Update: {$stats['updated']}. Skip: {$stats['skipped']}.";
+            return response()->json(['status' => 'success', 'message' => $msg]);
         }
-        return back()->with('success', "Proses Selesai! (Baru: $insertedCount, Update: $updatedCount)");
+        
+        return back()->with('success', "Proses Selesai! (Lihat Log)");
     }
 
-    private function deleteDirectory($dir) {
-        if (!file_exists($dir)) return true;
-        if (!is_dir($dir)) return unlink($dir);
-        foreach (scandir($dir) as $item) {
-            if ($item == '.' || $item == '..') continue;
-            if (!$this->deleteDirectory($dir . DIRECTORY_SEPARATOR . $item)) return false;
-        }
-        return rmdir($dir);
-    }
+    // =========================================================================
+    // MANUAL DRAW & CRUD METHODS (TIDAK BERUBAH)
+    // =========================================================================
 
-    // --- FITUR LAIN (TIDAK BERUBAH) ---
     public function storeDraw(Request $request)
     {
         try {
@@ -344,11 +407,15 @@ class GisController extends Controller
     {
         $request->validate(['name' => 'required|string|max:255', 'color' => 'required|string|max:7']);
         $layer = Layer::create([
-            'name' => $request->name, 'color' => $request->color, 'description' => $request->description,
-            'mode' => $request->mode ?? 'standard', 'is_active' => true
+            'name' => $request->name, 
+            'color' => $request->color, 
+            'description' => $request->description,
+            'mode' => $request->mode ?? 'standard', 
+            'is_active' => true
         ]);
         return response()->json(['status' => 'success', 'data' => $layer]);
     }
+
     public function getLayers() { return response()->json(Layer::all()); }
 
     public function indexTable(Request $request)
@@ -377,6 +444,7 @@ class GisController extends Controller
 
         $data = $query->select('id', 'name', 'properties', 'layer_id', 'created_at', DB::raw("ST_AsGeoJSON(ST_Centroid(geom::geometry)) as center"))
                       ->orderBy('id', 'desc')->paginate(15)->withQueryString();
+        
         $layers = Layer::orderBy('name', 'asc')->get();
         return view('admin.aset.index', compact('data', 'layers', 'search', 'kecamatan', 'desa', 'hak', 'sumber', 'layerId'));
     }

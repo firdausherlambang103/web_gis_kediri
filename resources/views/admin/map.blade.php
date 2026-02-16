@@ -15,7 +15,6 @@
             box-shadow: 0 4px 15px rgba(0,0,0,0.2); color: #333;
         }
 
-        /* Filter Box (Kiri Atas) */
         .map-filter-box {
             position: absolute; top: 10px; right: 10px; z-index: 1000;
             background: rgba(255, 255, 255, 0.95); padding: 15px; border-radius: 8px;
@@ -23,7 +22,6 @@
             backdrop-filter: blur(5px);
         }
 
-        /* Layer Control (Kanan Atas - Bawah Filter) */
         .layer-control-box {
             position: absolute; top: 280px; right: 10px; z-index: 1000;
             background: rgba(255, 255, 255, 0.95); padding: 10px; border-radius: 8px;
@@ -44,16 +42,18 @@
         .bg-label { background-color: #f8f9fa; font-weight: 600; color: #555; width: 40%; }
         
         .progress-group { display: none; margin-top: 15px; }
-        .upload-log { max-height: 100px; overflow-y: auto; font-size: 0.85rem; margin-top: 10px; border: 1px solid #ddd; padding: 5px; background: #f9f9f9; }
+        .upload-log { max-height: 150px; overflow-y: auto; font-size: 0.85rem; margin-top: 10px; border: 1px solid #ddd; padding: 5px; background: #f9f9f9; }
     </style>
 @endpush
 
 @section('content')
 <div class="container-fluid p-0 position-relative">
+    {{-- Loading Indicator --}}
     <div id="map-loading">
         <i class="fas fa-circle-notch fa-spin text-primary mr-2"></i> <span id="loading-text">Memuat Data...</span>
     </div>
 
+    {{-- Filter Box --}}
     <div class="map-filter-box">
         <h6 class="font-weight-bold mb-3"><i class="fas fa-search text-primary"></i> Filter Peta</h6>
         <div class="form-group mb-2">
@@ -85,6 +85,7 @@
         </button>
     </div>
 
+    {{-- Layer Control Box --}}
     <div class="layer-control-box">
         <h6 class="font-weight-bold mb-2"><i class="fas fa-layer-group text-primary"></i> Layer Aktif</h6>
         <div id="layerList" class="mb-2">
@@ -110,6 +111,59 @@
     <div id="map"></div>
 </div>
 
+{{-- Modal Upload --}}
+<div class="modal fade" id="uploadModal" data-backdrop="static">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h4 class="modal-title">Upload SHP ke Layer</h4>
+                <button type="button" class="close" onclick="resetUploadModal()" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Pilih Layer Tujuan <span class="text-danger">*</span></label>
+                    <div class="input-group">
+                        <select id="uploadLayerSelect" class="form-control">
+                            <option value="">-- Pilih Layer --</option>
+                            @foreach($layers as $layer)
+                                <option value="{{ $layer->id }}">{{ $layer->name }}</option>
+                            @endforeach
+                        </select>
+                        <div class="input-group-append">
+                            <button class="btn btn-outline-secondary" type="button" data-toggle="modal" data-target="#modalAddLayer"><i class="fas fa-plus"></i></button>
+                        </div>
+                    </div>
+                </div>
+                <div class="alert alert-info small mt-2"><i class="fas fa-info-circle"></i> Pilih banyak file <b>.zip</b> sekaligus.</div>
+                <div class="form-group">
+                    <div class="custom-file">
+                        <input type="file" class="custom-file-input" id="shpFilesInput" accept=".zip" multiple>
+                        <label class="custom-file-label" for="shpFilesInput">Pilih file ZIP...</label>
+                    </div>
+                    <small id="fileListInfo" class="text-muted mt-2"></small>
+                </div>
+                <div class="progress-group" id="progressArea">
+                    <div class="d-flex justify-content-between small mb-1">
+                        <span id="progressText">Menyiapkan...</span><span id="progressPercent">0%</span>
+                    </div>
+                    <div class="progress progress-sm"><div class="progress-bar bg-primary" id="progressBar" style="width: 0%"></div></div>
+                    <div id="uploadLog" class="upload-log" style="display:none;"></div>
+                </div>
+            </div>
+            <div class="modal-footer justify-content-between">
+                <button type="button" class="btn btn-default" onclick="resetUploadModal()" data-dismiss="modal">Tutup</button>
+                <button type="button" class="btn btn-success" id="btnStartUpload" onclick="startBatchUpload()">
+                    <i class="fas fa-upload"></i> Mulai Upload
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{{-- Include Modal Lain --}}
+@include('admin.aset.partials.modals')
+
+{{-- Modal Add Layer --}}
 <div class="modal fade" id="modalAddLayer">
     <div class="modal-dialog modal-sm">
         <div class="modal-content">
@@ -134,6 +188,7 @@
     </div>
 </div>
 
+{{-- Modal Draw --}}
 <div class="modal fade" id="modalDraw" tabindex="-1" role="dialog" data-backdrop="static">
     <div class="modal-dialog" role="document">
         <div class="modal-content">
@@ -209,58 +264,6 @@
     </div>
 </div>
 
-<div class="modal fade" id="uploadModal" data-backdrop="static">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h4 class="modal-title">Upload SHP ke Layer</h4>
-                <button type="button" class="close" onclick="resetUploadModal()" data-dismiss="modal">&times;</button>
-            </div>
-            <div class="modal-body">
-                
-                <div class="form-group">
-                    <label>Pilih Layer Tujuan <span class="text-danger">*</span></label>
-                    <div class="input-group">
-                        <select id="uploadLayerSelect" class="form-control">
-                            <option value="">-- Pilih Layer --</option>
-                            @foreach($layers as $layer)
-                                <option value="{{ $layer->id }}">{{ $layer->name }}</option>
-                            @endforeach
-                        </select>
-                        <div class="input-group-append">
-                            <button class="btn btn-outline-secondary" type="button" data-toggle="modal" data-target="#modalAddLayer"><i class="fas fa-plus"></i></button>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="alert alert-info small mt-2"><i class="fas fa-info-circle"></i> Pilih banyak file <b>.zip</b> sekaligus.</div>
-                <div class="form-group">
-                    <div class="custom-file">
-                        <input type="file" class="custom-file-input" id="shpFilesInput" accept=".zip" multiple>
-                        <label class="custom-file-label" for="shpFilesInput">Pilih file ZIP...</label>
-                    </div>
-                    <small id="fileListInfo" class="text-muted mt-2"></small>
-                </div>
-                <div class="progress-group" id="progressArea">
-                    <div class="d-flex justify-content-between small mb-1">
-                        <span id="progressText">Menyiapkan...</span><span id="progressPercent">0%</span>
-                    </div>
-                    <div class="progress progress-sm"><div class="progress-bar bg-primary" id="progressBar" style="width: 0%"></div></div>
-                    <div id="uploadLog" class="upload-log" style="display:none;"></div>
-                </div>
-            </div>
-            <div class="modal-footer justify-content-between">
-                <button type="button" class="btn btn-default" onclick="resetUploadModal()" data-dismiss="modal">Tutup</button>
-                <button type="button" class="btn btn-success" id="btnStartUpload" onclick="startBatchUpload()">
-                    <i class="fas fa-upload"></i> Mulai Upload
-                </button>
-            </div>
-        </div>
-    </div>
-</div>
-
-@include('admin.aset.partials.modals')
-
 @endsection
 
 @push('scripts')
@@ -302,8 +305,6 @@
     }
 
     // === 3. MANAJEMEN LAYER ===
-    
-    // a. Buat Layer Baru
     function createNewLayer() {
         var name = $('#newLayerName').val();
         var color = $('#newLayerColor').val();
@@ -320,10 +321,7 @@
         });
     }
 
-    // b. Filter Layer Checkbox
-    $('.layer-checkbox').change(function() {
-        loadData(); // Reload peta saat layer dicentang/uncentang
-    });
+    $('.layer-checkbox').change(function() { loadData(); });
 
     // === 4. GAMBAR MANUAL ===
     var drawnItems = new L.FeatureGroup(); map.addLayer(drawnItems);
@@ -354,7 +352,7 @@
             url: "{{ route('asset.storeDraw') }}", type: "POST",
             data: {
                 _token: "{{ csrf_token() }}", name: name, status: status, 
-                color: $('#drawColor').val(), layer_id: $('#drawLayerId').val(), // Kirim Layer ID
+                color: $('#drawColor').val(), layer_id: $('#drawLayerId').val(), 
                 kecamatan: $('#drawKec').val(), desa: $('#drawDesa').val(), 
                 description: $('#drawDesc').val(), geometry: $('#drawGeometry').val()
             },
@@ -367,16 +365,10 @@
     }
 
     // === 5. LOAD DATA & VISUALISASI ===
-    
-    // Fungsi warna diperbarui untuk mendukung Warna Layer
     function getColor(props) {
-        // 1. Cek jika ada warna manual di properti
         if (props.color && props.color !== '#ff0000') return props.color;
-        
-        // 2. Cek warna dari layer (jika ada)
         if (props.layer_color) return props.layer_color;
-
-        // 3. Fallback ke warna tipe hak (Logic lama)
+        
         var raw = props.raw_data || {};
         var tipe = raw.TIPEHAK || raw.TIPE_HAK || 'Import';
         tipe = tipe.toString().toUpperCase();
@@ -392,7 +384,7 @@
     var geoJsonLayer = L.geoJSON(null, {
         style: function(feature) {
             var col = getColor(feature.properties || {});
-            return { color: col, fillColor: col, weight: 1, opacity: 1, fillOpacity: 0.5 };
+            return { color: col, fillColor: col, weight: 1, opacity: 1, fillOpacity: 0.6 };
         },
         pointToLayer: function(feature, latlng) {
             if (feature.properties.type === 'cluster') {
@@ -445,7 +437,6 @@
     function loadData() {
         $('#map-loading').fadeIn(); $('#loading-text').text("Memuat Data...");
         
-        // Ambil Layer yang dicentang
         var selectedLayers = [];
         $('.layer-checkbox:checked').each(function() { selectedLayers.push($(this).val()); });
 
@@ -454,8 +445,6 @@
             east: map.getBounds().getEast(), west: map.getBounds().getWest(),
             zoom: map.getZoom(), search: $('#searchMap').val(), hak: $('#filterHak').val()
         });
-
-        // Append array layer ke URL (Manual karena URLSearchParams tidak support array PHP style)
         selectedLayers.forEach(id => params.append('layers[]', id));
 
         if (abortController) abortController.abort();
@@ -475,9 +464,10 @@
             })
             .catch(err => { if (err.name !== 'AbortError') $('#map-loading').fadeOut(); });
     }
-    map.on('moveend', loadData); loadData();
+    map.on('moveend', loadData); 
+    loadData();
 
-    // === 6. UPLOAD LOGIC (Dengan Layer) ===
+    // === 6. UPLOAD LOGIC (FIXED: AJAX & JSON Handling) ===
     var selectedFiles = [];
     $('#shpFilesInput').on('change', function() {
         selectedFiles = Array.from($(this)[0].files);
@@ -485,29 +475,23 @@
     });
 
     async function startBatchUpload() {
-        // 1. Validasi Input
         var layerId = $('#uploadLayerSelect').val();
         if(!layerId) { Swal.fire('Error', 'Pilih Layer Tujuan dulu!', 'error'); return; }
-        
         if (selectedFiles.length === 0) { Swal.fire('Warning', 'Pilih file dulu!', 'warning'); return; }
         
-        // 2. Siapkan UI
         $('#btnStartUpload').prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Memproses...');
         $('#progressArea').show(); 
         $('#uploadLog').show().html('');
         
         let successCount = 0; 
         let failCount = 0;
-        let errorDetails = []; // Array untuk menampung pesan error spesifik
+        let errorDetails = [];
 
-        // 3. Loop Upload File
         for (let i = 0; i < selectedFiles.length; i++) {
             let file = selectedFiles[i];
-            
-            // Update Progress Bar
             let percent = Math.round(((i) / selectedFiles.length) * 100);
             $('#progressBar').css('width', percent + '%'); 
-            $('#progressText').text(`Proses ${i+1}/${selectedFiles.length}`); 
+            $('#progressText').text(`Proses ${i+1}/${selectedFiles.length}: ${file.name}`); 
             $('#progressPercent').text(percent + '%');
             
             let formData = new FormData(); 
@@ -515,59 +499,65 @@
             formData.append('layer_id', layerId);
 
             try {
-                // Kirim ke Server
                 let response = await fetch("{{ route('asset.uploadShp') }}", { 
                     method: 'POST', 
                     headers: { 
                         'X-CSRF-TOKEN': '{{ csrf_token() }}', 
-                        'Accept': 'application/json' 
+                        'Accept': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest' // PERBAIKAN: Header Wajib
                     }, 
                     body: formData 
                 });
                 
-                let result = await response.json();
+                let responseText = await response.text();
+                let result;
+
+                try {
+                    result = JSON.parse(responseText); // Coba parse JSON
+                } catch (e) {
+                    console.error("Server Error HTML:", responseText);
+                    throw new Error("Server Crash / Error 500 (Lihat Console)");
+                }
                 
                 if (response.ok) {
                     successCount++; 
+                    // Tampilkan Statistik Sukses (Total, Insert, Skip)
+                    let statsMsg = result.message || 'Berhasil diupload';
+                    $('#uploadLog').append(`<div class="text-success small border-bottom py-1"><i class="fas fa-check-circle"></i> <b>${file.name}</b>: ${statsMsg}</div>`);
                 } else { 
                     failCount++; 
-                    // TANGKAP PESAN ERROR DARI CONTROLLER
-                    let msg = result.message || 'Gagal tanpa pesan spesifik';
-                    
-                    // Simpan ke list error untuk Popup nanti
+                    let msg = result.message || 'Gagal';
                     errorDetails.push(`<b>${file.name}</b>: <span class="text-danger">${msg}</span>`);
-                    
-                    // Tampilkan di log kecil bawah progress bar
-                    $('#uploadLog').append(`<div class="text-danger small border-bottom py-1"><i class="fas fa-times"></i> ${file.name}: ${msg}</div>`); 
+                    $('#uploadLog').append(`<div class="text-danger small border-bottom py-1"><i class="fas fa-times-circle"></i> <b>${file.name}</b>: ${msg}</div>`); 
                 }
             } catch (error) { 
+                console.error(error);
                 failCount++; 
-                errorDetails.push(`<b>${file.name}</b>: Masalah Koneksi / Server Timeout`);
-                $('#uploadLog').append(`<div class="text-danger small"><i class="fas fa-times"></i> ${file.name}: Error Koneksi</div>`); 
+                let errorMsg = error.message || "Masalah Koneksi / Server Timeout";
+                errorDetails.push(`<b>${file.name}</b>: <span class="text-danger">${errorMsg}</span>`);
+                $('#uploadLog').append(`<div class="text-danger small"><i class="fas fa-exclamation-triangle"></i> ${file.name}: ${errorMsg}</div>`); 
             }
         }
         
-        // 4. Finalisasi UI
-        $('#progressBar').css('width', '100%').addClass(failCount > 0 ? 'bg-warning' : 'bg-success');
+        $('#progressBar').css('width', '100%');
         $('#progressText').text('Selesai!'); $('#progressPercent').text('100%');
         $('#btnStartUpload').html('Selesai').removeClass('btn-success').addClass('btn-secondary');
         
-        loadData(); // Refresh Peta
+        loadData(); 
         
-        // === 5. TAMPILKAN POPUP HASIL (DENGAN DETAIL ERROR) ===
         if(failCount > 0) {
             Swal.fire({
-                title: 'Proses Selesai (Ada Gagal)',
+                title: 'Proses Selesai',
                 icon: 'warning',
                 width: 700,
                 html: `
                     <div class="text-left">
                         <p class="mb-2">
                             <span class="badge badge-success p-2">Berhasil: ${successCount}</span>
-                            <span class="badge badge-danger p-2">Gagal: ${failCount}</span>
+                            <span class="badge badge-warning p-2">Gagal: ${failCount}</span>
                         </p>
                         <div class="card bg-light">
-                            <div class="card-body p-2" style="max-height: 300px; overflow-y: auto; font-size: 0.85rem; text-align: left;">
+                            <div class="card-body p-2" style="max-height: 200px; overflow-y: auto; font-size: 0.85rem; text-align: left;">
                                 ${errorDetails.join('<hr class="my-1">')}
                             </div>
                         </div>
@@ -575,7 +565,7 @@
                 `
             });
         } else {
-            Swal.fire('Sukses', `Berhasil upload ${successCount} file!`, 'success');
+            Swal.fire('Sukses', `Berhasil upload ${successCount} file! Cek Log di bawah untuk detail statistik.`, 'success');
         }
     }
     
@@ -584,7 +574,7 @@
         $('#progressArea').hide(); $('#uploadLog').hide().html(''); selectedFiles = [];
     }
 
-    // === 7. FUNGSI EDIT & DELETE (Integrasi dari kode sebelumnya) ===
+    // === 7. FUNGSI EDIT & DELETE ===
     function editAsset(id) {
         $.get('/asset/' + id, function(data) {
             $('#editId').val(data.id);
