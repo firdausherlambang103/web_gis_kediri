@@ -1,9 +1,14 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+// Hapus Auth::routes(), kita pakai controller manual ini:
+use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\Auth\RegisterController;
+
 use App\Http\Controllers\GisController;
 use App\Http\Controllers\StatisticController;
-use App\Http\Controllers\LayerController; 
+use App\Http\Controllers\LayerController;
+use App\Http\Controllers\AdminController;
 
 /*
 |--------------------------------------------------------------------------
@@ -11,47 +16,73 @@ use App\Http\Controllers\LayerController;
 |--------------------------------------------------------------------------
 */
 
-// Redirect root ke dashboard
+// 1. Redirect root ke dashboard (akan dicegat middleware auth jika belum login)
 Route::get('/', function () {
     return redirect()->route('dashboard');
 });
 
-// Group Route untuk GIS Controller (Peta & Aset)
-Route::controller(GisController::class)->group(function () {
-    
-    // 1. Halaman Utama & API Peta
-    Route::get('/dashboard', 'index')->name('dashboard');
-    Route::get('/api/assets', 'apiData')->name('api.assets');
+// =============================================================================
+// AUTHENTICATION ROUTES (MANUAL)
+// =============================================================================
+// Kita pakai ini MENGGANTIKAN Auth::routes() agar bisa custom logic (is_active & log)
 
-    // 2. Halaman Tabel Data Aset
-    Route::get('/aset', 'indexTable')->name('aset.index');
+// Login & Logout
+Route::get('/login', [LoginController::class, 'showLoginForm'])->name('login');
+Route::post('/login', [LoginController::class, 'login'])->name('login.post');
+Route::post('/logout', [LoginController::class, 'logout'])->name('logout');
 
-    // 3. Manajemen Aset (CRUD & Upload)
-    Route::post('/asset/draw', 'storeDraw')->name('asset.storeDraw');   // Simpan Gambar Manual
-    Route::post('/asset/upload', 'storeShp')->name('asset.uploadShp');  // Upload SHP
-    Route::get('/asset/{id}', 'show')->name('asset.show');              // Ambil Detail (untuk Edit)
-    Route::put('/asset/{id}', 'update')->name('asset.update');          // Simpan Edit
-    Route::delete('/asset/{id}', 'destroy')->name('asset.destroy');     // Hapus Aset
+// Register
+Route::get('/register', [RegisterController::class, 'showRegistrationForm'])->name('register');
+Route::post('/register', [RegisterController::class, 'register'])->name('register.post');
 
-    // 4. Manajemen Layer (AJAX di Peta)
-    Route::post('/layer', 'storeLayer')->name('layer.store');           
-    Route::get('/layers', 'getLayers')->name('layer.get');              
-    
-    // --- TAMBAHAN BARU: Update Warna Layer via AJAX ---
-    // Ini diperlukan agar color picker di peta bisa menyimpan perubahan ke database
-    Route::post('/layer/update-color', 'updateLayerColor')->name('layer.updateColor');
+
+// =============================================================================
+// GROUP: PUBLIC / USER LOGIN (Bisa diakses user yang sudah login & aktif)
+// =============================================================================
+Route::middleware(['auth'])->group(function () {
+
+    // --- DASHBOARD & PETA (GIS) ---
+    Route::controller(GisController::class)->group(function () {
+        Route::get('/dashboard', 'index')->name('dashboard');
+        Route::get('/api/assets', 'apiData')->name('api.assets');
+        Route::get('/aset', 'indexTable')->name('aset.index');
+        Route::get('/asset/{id}', 'show')->name('asset.show'); 
+        Route::get('/layers', 'getLayers')->name('layer.get'); 
+    });
+
+    // --- STATISTIK ---
+    Route::controller(StatisticController::class)->group(function () {
+        Route::get('/statistics', 'index')->name('statistics.index');
+        Route::any('/statistics/run', 'runAnalysis')->name('statistics.run'); 
+        Route::get('/statistics/export', 'export')->name('statistics.export');
+    });
+
 });
 
-// Group Route untuk Master Data Layer (Halaman Khusus Management)
-Route::resource('master-layer', LayerController::class)->except(['create', 'show', 'edit']);
+// =============================================================================
+// GROUP: ADMIN ONLY (Hanya User dengan Role 'admin')
+// =============================================================================
+Route::middleware(['auth', 'admin'])->group(function () {
 
-// Group Route untuk Statistik & Analisis
-Route::controller(StatisticController::class)->group(function () {
-    Route::get('/statistics', 'index')->name('statistics.index');
-    
-    // UBAH BARIS INI: Gunakan 'any' atau 'match' agar bisa POST (ajax) dan GET (pagination)
-    Route::any('/statistics/run', 'runAnalysis')->name('statistics.run'); 
-    
-    // Route Export
-    Route::get('/statistics/export', 'export')->name('statistics.export');
+    // --- MANAJEMEN ASET (CRUD Full) ---
+    Route::controller(GisController::class)->group(function () {
+        Route::post('/asset/draw', 'storeDraw')->name('asset.storeDraw');   
+        Route::post('/asset/upload', 'storeShp')->name('asset.uploadShp');  
+        Route::put('/asset/{id}', 'update')->name('asset.update');          
+        Route::delete('/asset/{id}', 'destroy')->name('asset.destroy');     
+        Route::post('/layer', 'storeLayer')->name('layer.store');           
+        Route::post('/layer/update-color', 'updateLayerColor')->name('layer.updateColor');
+    });
+
+    // --- MANAJEMEN MASTER LAYER ---
+    Route::resource('master-layer', LayerController::class)->except(['create', 'show', 'edit']);
+
+    // --- MANAJEMEN USER & LOG ---
+    Route::controller(AdminController::class)->group(function() {
+        Route::get('/admin/users', 'users')->name('admin.users');
+        Route::post('/admin/users/{id}/approve', 'approveUser')->name('admin.users.approve');
+        Route::delete('/admin/users/{id}', 'deleteUser')->name('admin.users.delete');
+        Route::get('/admin/logs', 'logs')->name('admin.logs');
+    });
+
 });

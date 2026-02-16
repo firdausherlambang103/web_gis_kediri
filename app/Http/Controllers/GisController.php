@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Log;
 use ZipArchive;
 use RecursiveIteratorIterator;
 use RecursiveDirectoryIterator;
+use App\Helpers\LogHelper; // <--- PENTING: Import Helper Log
 
 class GisController extends Controller
 {
@@ -24,7 +25,7 @@ class GisController extends Controller
         $keywords = [$kode]; 
         if ($kode == 'HM') { $keywords[] = 'Hak Milik'; $keywords[] = 'Milik'; }
         if ($kode == 'HGB') { $keywords[] = 'Hak Guna Bangunan'; $keywords[] = 'Guna Bangunan'; }
-        if ($kode == 'HGU') { $keywords[] = 'Hak Guna Usaha'; $keywords[] = 'Guna Usaha'; } // <--- Support HGU
+        if ($kode == 'HGU') { $keywords[] = 'Hak Guna Usaha'; $keywords[] = 'Guna Usaha'; } 
         if ($kode == 'HP') { $keywords[] = 'Hak Pakai'; $keywords[] = 'Pakai'; }
         if ($kode == 'WAKAF') { $keywords[] = 'Wakaf'; }
         if ($kode == 'KOSONG' || $kode == 'TANPA HAK') { $keywords[] = 'Tanah Negara'; $keywords[] = 'Belum Ada Hak'; $keywords[] = 'null'; }
@@ -36,7 +37,7 @@ class GisController extends Controller
         $tipe = strtoupper($tipeHak ?? '');
         if (str_contains($tipe, 'HM') || str_contains($tipe, 'MILIK')) return '#28a745';      
         if (str_contains($tipe, 'HGB') || str_contains($tipe, 'GUNA BANGUNAN')) return '#ffc107'; 
-        if (str_contains($tipe, 'HGU') || str_contains($tipe, 'GUNA USAHA')) return '#fd7e14'; // <--- Support HGU
+        if (str_contains($tipe, 'HGU') || str_contains($tipe, 'GUNA USAHA')) return '#fd7e14'; 
         if (str_contains($tipe, 'HP') || str_contains($tipe, 'PAKAI')) return '#17a2b8';      
         if (str_contains($tipe, 'WAKAF')) return '#ffffff';    
         if (str_contains($tipe, 'HPL') || str_contains($tipe, 'PENGELOLAAN')) return '#6f42c1';   
@@ -142,18 +143,16 @@ class GisController extends Controller
                                 $finalColor = $item->layer->color_hm ?? '#28a745';
                             } elseif (str_contains($tipeHak, 'HGB') || str_contains($tipeHak, 'GUNA BANGUNAN')) {
                                 $finalColor = $item->layer->color_hgb ?? '#ffc107';
-                            } elseif (str_contains($tipeHak, 'HGU') || str_contains($tipeHak, 'GUNA USAHA')) { // <--- HGU
+                            } elseif (str_contains($tipeHak, 'HGU') || str_contains($tipeHak, 'GUNA USAHA')) { 
                                 $finalColor = $item->layer->color_hgu ?? '#fd7e14';
                             } elseif (str_contains($tipeHak, 'HP') || str_contains($tipeHak, 'PAKAI')) {
                                 $finalColor = $item->layer->color_hp ?? '#17a2b8';
                             } elseif (str_contains($tipeHak, 'WAKAF')) {
                                 $finalColor = $item->layer->color_wakaf ?? '#6f42c1';
                             } else {
-                                // Tanah Negara / Kosong
                                 $finalColor = $item->layer->color_tn ?? '#6c757d';
                             }
                         } else {
-                            // Mode Standard
                             $finalColor = $item->layer->color;
                         }
                     }
@@ -170,14 +169,13 @@ class GisController extends Controller
     }
 
     // =========================================================================
-    // UPLOAD LOGIC (SMART UPLOAD: ALLOW ALL ON FIRST, CHECK DB ON SUBSEQUENT)
+    // UPLOAD LOGIC
     // =========================================================================
 
     public function storeShp(Request $request)
     {
         Log::info('--- MEMULAI UPLOAD SHP ---'); 
 
-        // 1. Setup PHP Limit
         set_time_limit(0);              
         ini_set('memory_limit', '1024M'); 
         ini_set('max_execution_time', 0);
@@ -199,7 +197,7 @@ class GisController extends Controller
         ];
         $failedInfo = [];
 
-        // 2. Deteksi Path GDAL
+        // Deteksi Path GDAL
         $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
         $envPrefix = "";
         $ogr2ogrCmd = "ogr2ogr"; 
@@ -264,7 +262,7 @@ class GisController extends Controller
                 $handle = fopen($geojsonFile, "r");
                 if (!$handle) throw new \Exception("Gagal membuka hasil konversi.");
 
-                // 3. Load Index DB (Hanya untuk Cek Update jika Mode SUBSEQUENT)
+                // Load Index DB (Hanya untuk Cek Update jika Mode SUBSEQUENT)
                 $existingMap = DB::table('spatial_features')
                     ->where('layer_id', $layerId)
                     ->select('id', DB::raw("properties->'raw_data'->>'NIB' as nib"), DB::raw("properties->'raw_data'->>'ID' as raw_id"))
@@ -310,7 +308,6 @@ class GisController extends Controller
 
                     // --- CEK MODE KECAMATAN ---
                     if (!isset($kecamatanModes[$kecamatan])) {
-                        // Cek apakah kecamatan ini sudah ada di DB?
                         $existsInDb = DB::table('spatial_features')
                             ->where('layer_id', $layerId)
                             ->whereRaw("properties->'raw_data'->>'KECAMATAN' ILIKE ?", [$kecamatan])
@@ -322,18 +319,13 @@ class GisController extends Controller
 
                     // --- LOGIKA UTAMA ---
                     if ($uniqueKey) {
-                        
-                        // JIKA MODE = SUBSEQUENT (KECAMATAN SUDAH ADA / UPLOAD KEDUA)
                         if ($mode === 'SUBSEQUENT') {
-                            
-                            // 1. Cek Duplikat Internal
                             if (isset($localProcessed[$uniqueKey])) {
                                 $stats['skipped']++; 
                                 continue; 
                             }
                             $localProcessed[$uniqueKey] = true;
 
-                            // 2. Cek DB untuk Update
                             if (isset($existingMap[$uniqueKey])) {
                                 DB::table('spatial_features')
                                     ->where('id', $existingMap[$uniqueKey])
@@ -347,9 +339,6 @@ class GisController extends Controller
                                 continue; 
                             }
                         }
-                        
-                        // JIKA MODE = FIRST (KECAMATAN BARU / UPLOAD PERTAMA)
-                        // -> LANGSUNG INSERT SEMUA (ALLOW DUPLICATE FILE)
                     }
 
                     // --- INSERT ---
@@ -375,7 +364,9 @@ class GisController extends Controller
                 }
 
                 fclose($handle);
-                Log::info("File: $originalName. Stats: " . json_encode($stats));
+                
+                // --- LOGGING AKTIVITAS UPLOAD ---
+                LogHelper::record('UPLOAD', $originalName, "Upload SHP selesai. Baru: {$stats['inserted']}, Update: {$stats['updated']}");
 
             } catch (\Exception $e) {
                 Log::error("Error file " . $originalName . ": " . $e->getMessage());
@@ -396,7 +387,7 @@ class GisController extends Controller
     }
 
     // =========================================================================
-    // MANUAL DRAW & CRUD METHODS (TIDAK BERUBAH)
+    // MANUAL DRAW & CRUD METHODS
     // =========================================================================
 
     public function storeDraw(Request $request)
@@ -423,6 +414,10 @@ class GisController extends Controller
                 'geom' => DB::raw("ST_Force2D(ST_SetSRID(ST_GeomFromGeoJSON('$geometryJson'), 4326))"),
                 'created_at' => now(), 'updated_at' => now()
             ]);
+
+            // --- LOGGING CREATE MANUAL ---
+            LogHelper::record('CREATE', $request->name, "Menambah aset manual tipe " . $request->status);
+
             return response()->json(['status' => 'success', 'message' => 'Data berhasil disimpan! Luas: ' . round($luas, 2) . ' m²']);
         } catch (\Exception $e) { return response()->json(['status' => 'error', 'message' => $e->getMessage()], 500); }
     }
@@ -437,6 +432,10 @@ class GisController extends Controller
             'mode' => $request->mode ?? 'standard', 
             'is_active' => true
         ]);
+
+        // --- LOGGING CREATE LAYER ---
+        LogHelper::record('CREATE_LAYER', $request->name, "Membuat layer baru");
+
         return response()->json(['status' => 'success', 'data' => $layer]);
     }
 
@@ -499,16 +498,30 @@ class GisController extends Controller
             if($request->has('luas')) $props['raw_data']['LUASTERTUL'] = $request->luas;
             $props['color'] = $request->color; $props['description'] = $request->description;
             DB::table('spatial_features')->where('id', $id)->update(['name' => $request->name, 'properties' => json_encode($props), 'updated_at' => now()]);
+            
+            // --- LOGGING UPDATE ---
+            LogHelper::record('UPDATE', $request->name, "Update data aset ID: $id");
+
             return response()->json(['status' => 'success', 'message' => 'Data berhasil diperbarui!']);
         } catch (\Exception $e) { return response()->json(['status' => 'error', 'message' => $e->getMessage()], 500); }
     }
 
     public function destroy($id) {
-        try { DB::table('spatial_features')->delete($id); return response()->json(['status' => 'success', 'message' => 'Data berhasil dihapus!']); } 
+        try { 
+            // Ambil nama dulu untuk log
+            $name = DB::table('spatial_features')->where('id', $id)->value('name') ?? "ID $id";
+            
+            DB::table('spatial_features')->delete($id); 
+            
+            // --- LOGGING DELETE ---
+            LogHelper::record('DELETE', $name, "Menghapus data aset");
+
+            return response()->json(['status' => 'success', 'message' => 'Data berhasil dihapus!']); 
+        } 
         catch (\Exception $e) { return response()->json(['status' => 'error', 'message' => $e->getMessage()], 500); }
     }
 
-    // --- Update Warna Layer via Ajax (Fitur Color Picker di Peta) ---
+    // --- Update Warna Layer via Ajax ---
     public function updateLayerColor(Request $request)
     {
         $request->validate([
@@ -517,6 +530,9 @@ class GisController extends Controller
         ]);
 
         Layer::where('id', $request->id)->update(['color' => $request->color]);
+
+        // --- LOGGING UPDATE LAYER COLOR ---
+        LogHelper::record('UPDATE_LAYER', "Layer ID " . $request->id, "Ubah warna layer ke " . $request->color);
 
         return response()->json(['status' => 'success', 'message' => 'Warna layer diperbarui']);
     }
