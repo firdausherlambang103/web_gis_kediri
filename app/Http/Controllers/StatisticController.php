@@ -3,26 +3,40 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use App\Models\Layer; // Tambahkan Model Layer
+use App\Models\SpatialFeature; // Model Aset
+use App\Models\Layer;          // Model Layer
 use Illuminate\Support\Facades\DB;
 use App\Jobs\AnalyzeOverlapsJob;
+use App\Helpers\LogHelper;     // Helper Log
+
+// --- IMPORT LIBRARY EXCEL ---
+use App\Exports\OverlapExport;
+use Maatwebsite\Excel\Facades\Excel;
 
 class StatisticController extends Controller
 {
+    /**
+     * Halaman Utama Statistik & Dashboard
+     */
     public function index(Request $request)
     {
-        // 1. Set waktu eksekusi
+        // 1. Set waktu eksekusi agar tidak timeout saat query berat
         set_time_limit(300); 
 
-        // Ambil Daftar Layer untuk Filter
-        $layers = Layer::orderBy('name', 'asc')->get();
+        // 2. Ambil Filter
+        $layers = Layer::where('is_active', true)->orderBy('name', 'asc')->get();
         $layerId = $request->input('layer_id');
 
+        // 3. Statistik Ringkas (Untuk Kartu Atas Dashboard)
+        $totalAset = SpatialFeature::count();
+        $totalLayer = $layers->count();
+        $totalOverlap = DB::table('overlap_results')->count();
+
         // ==================================================================================
-        // DEFINISI LOGIKA PENCARIAN (SQL EXPRESSION)
+        // DEFINISI LOGIKA PENCARIAN (SQL EXPRESSION) - UNTUK GRAFIK & TABEL
         // ==================================================================================
 
-        // Logic untuk mendeteksi Tipe Hak
+        // Logic untuk mendeteksi Tipe Hak (Normalisasi berbagai kemungkinan key JSON)
         $hakExpression = "
             COALESCE(
                 NULLIF(properties->'raw_data'->>'TIPEHAK', ''), 
@@ -49,7 +63,7 @@ class StatisticController extends Controller
         ";
 
         // ==================================================================================
-        // 2. QUERY STATISTIK TIPE HAK
+        // 4. QUERY STATISTIK TIPE HAK
         // ==================================================================================
         $queryHak = DB::table('spatial_features')
             ->select(
@@ -58,10 +72,7 @@ class StatisticController extends Controller
                 DB::raw("SUM(ST_Area(geom::geography)) as luas_m2")
             );
 
-        // Filter Layer
-        if ($layerId) {
-            $queryHak->where('layer_id', $layerId);
-        }
+        if ($layerId) $queryHak->where('layer_id', $layerId);
 
         $statsHak = $queryHak
             ->groupBy(DB::raw($hakExpression))
@@ -69,7 +80,7 @@ class StatisticController extends Controller
             ->get();
 
         // ==================================================================================
-        // 3. QUERY STATISTIK PER DESA (LUAS ASET)
+        // 5. QUERY STATISTIK PER DESA
         // ==================================================================================
         $queryDesa = DB::table('spatial_features')
             ->select(
@@ -78,10 +89,7 @@ class StatisticController extends Controller
                 DB::raw("SUM(ST_Area(geom::geography)) / 10000 as luas_hektar")
             );
 
-        // Filter Layer
-        if ($layerId) {
-            $queryDesa->where('layer_id', $layerId);
-        }
+        if ($layerId) $queryDesa->where('layer_id', $layerId);
         
         $statsDesa = $queryDesa
             ->groupBy(DB::raw($desaExpression))
@@ -91,27 +99,25 @@ class StatisticController extends Controller
             ->get();
 
         // ==================================================================================
-        // 4. ANALISIS TUMPANG TINDIH (DATA DETAIL)
+        // 6. ANALISIS TUMPANG TINDIH (DATA DETAIL)
         // ==================================================================================
-        $overlapQuery = DB::table('overlap_results');
+        $overlapQuery = DB::table('overlap_results')
+            ->select('overlap_results.*');
 
-        // Filter Layer pada Overlap (Join ke spatial_features untuk cek layer_id aset pertama)
+        // Filter Layer pada Overlap
         if ($layerId) {
             $overlapQuery->join('spatial_features', 'overlap_results.id_1', '=', 'spatial_features.id')
-                         ->where('spatial_features.layer_id', $layerId)
-                         ->select('overlap_results.*');
+                         ->where('spatial_features.layer_id', $layerId);
         }
         
-        $overlaps = $overlapQuery->orderBy('luas_overlap', 'desc')->paginate(50); 
+        $overlaps = $overlapQuery->orderBy('luas_overlap', 'desc')->paginate(15); 
 
-        // Info Update Terakhir
-        $lastUpdate = DB::table('overlap_results')->latest('created_at')->value('created_at');
-        
-        // Total Luas Terpetakan
-        $totalLuasTerpetakan = $statsHak->sum('luas_m2') / 10000; 
+        // Info tambahan
+        $lastUpdate = DB::table('overlap_results')->max('created_at');
+        $totalLuasTerpetakan = $statsHak->sum('luas_m2') / 10000; // Hektar
 
         // ==================================================================================
-        // 5. TOP 10 DESA DENGAN TUMPANG TINDIH TERBANYAK
+        // 7. TOP 10 DESA DENGAN OVERLAP TERBANYAK
         // ==================================================================================
         $queryTopOverlap = DB::table('overlap_results')
             ->select(
@@ -131,15 +137,46 @@ class StatisticController extends Controller
         $topOverlapVillages = $queryTopOverlap->get();
 
         return view('admin.statistic.index', compact(
+            'totalAset', 'totalLayer', 'totalOverlap', // Kartu Dashboard
             'statsHak', 'statsDesa', 'overlaps', 'totalLuasTerpetakan', 
             'layers', 'layerId', 'lastUpdate', 'topOverlapVillages'
         ));
     }
 
-    // Trigger Job Background (Tetap Ada)
+    /**
+     * Menjalankan Analisis (Trigger Python via Job)
+     */
     public function runAnalysis()
     {
+        // 1. Panggil Job Background
         AnalyzeOverlapsJob::dispatch();
+        
+        // 2. Catat Log
+        LogHelper::record('RUN_ANALYSIS', 'System', 'Menjalankan analisis tumpang tindih (Python)');
+
         return back()->with('success', 'Analisis sedang berjalan di background. Mohon tunggu beberapa saat dan refresh halaman.');
+    }
+
+    /**
+     * Export Data Overlap ke EXCEL (.xlsx)
+     * Menggunakan Library Maatwebsite/Excel
+     */
+    public function exportOverlap(Request $request)
+    {
+        $layerId = $request->input('layer_id');
+        
+        // Nama File .xlsx
+        $fileName = 'Laporan_Overlap_' . date('Y-m-d_H-i') . '.xlsx';
+
+        // Catat Log
+        LogHelper::record('EXPORT', 'Overlap Data', 'Export data overlap ke Excel (.xlsx)');
+
+        // Download Excel menggunakan Class Export yang sudah dibuat
+        return Excel::download(new OverlapExport($layerId), $fileName);
+    }
+
+    public function export()
+    {
+        return back()->with('info', 'Fitur export aset belum tersedia saat ini.');
     }
 }

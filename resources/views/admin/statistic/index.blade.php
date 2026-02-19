@@ -5,17 +5,18 @@
 @section('content')
 <div class="container-fluid">
     
+    {{-- BARIS 1: DASHBOARD HEADER & FILTER --}}
     <div class="row mb-3">
         <div class="col-md-12">
             <div class="card shadow-sm border-left-primary">
-                <div class="card-body p-3 d-flex align-items-center justify-content-between">
+                <div class="card-body p-3 d-flex align-items-center justify-content-between flex-wrap">
                     <div>
                         <h4 class="m-0 font-weight-bold text-primary">Dashboard Statistik</h4>
                         <small class="text-muted">Analisis persebaran aset, tipe hak, dan tumpang tindih lahan.</small>
                     </div>
                     
                     {{-- FORM FILTER HANYA LAYER --}}
-                    <form method="GET" action="{{ route('statistics.index') }}" class="form-inline">
+                    <form method="GET" action="{{ route('statistics.index') }}" class="form-inline mt-2 mt-md-0">
                         <div class="input-group mr-2">
                             <div class="input-group-prepend">
                                 <span class="input-group-text bg-white"><i class="fas fa-layer-group"></i></span>
@@ -30,14 +31,14 @@
                             </select>
                         </div>
                         <button type="submit" class="btn btn-primary shadow-sm"><i class="fas fa-filter mr-1"></i> Filter</button>
-                        <a href="{{ route('statistics.index') }}" class="btn btn-light border ml-2"><i class="fas fa-sync-alt"></i></a>
+                        <a href="{{ route('statistics.index') }}" class="btn btn-light border ml-2" title="Reset Filter"><i class="fas fa-sync-alt"></i></a>
                     </form>
                 </div>
             </div>
         </div>
     </div>
 
-    {{-- INFO BOX RINGKASAN --}}
+    {{-- BARIS 2: INFO BOX RINGKASAN --}}
     <div class="row">
         <div class="col-12 col-sm-6 col-md-4">
             <div class="info-box mb-3 shadow-sm p-3">
@@ -45,7 +46,8 @@
                 <div class="info-box-content">
                     <span class="info-box-text text-muted">Total Luas Terpetakan</span>
                     <span class="info-box-number display-4 text-success" style="font-size: 2rem;">
-                        {{ number_format($totalLuasTerpetakan, 2) }} <small>Ha</small>
+                        {{-- Format: 1.234,56 --}}
+                        {{ number_format($totalLuasTerpetakan, 2, ',', '.') }} <small>Ha</small>
                     </span>
                     <span class="progress-description text-xs text-muted">
                         @if($layerId)
@@ -63,7 +65,8 @@
                 <div class="info-box-content">
                     <span class="info-box-text text-muted">Total Bidang Aset</span>
                     <span class="info-box-number text-primary" style="font-size: 2rem;">
-                        {{ number_format($statsHak->sum('total')) }} <small>Bidang</small>
+                        {{-- Format: 1.234 --}}
+                        {{ number_format($statsHak->sum('total'), 0, ',', '.') }} <small>Bidang</small>
                     </span>
                     <span class="progress-description text-xs text-muted">
                         Jumlah poligon yang tersimpan
@@ -77,7 +80,8 @@
                 <div class="info-box-content">
                     <span class="info-box-text text-muted">Potensi Tumpang Tindih</span>
                     <span class="info-box-number text-danger" style="font-size: 2rem;">
-                        {{ number_format($overlaps->total()) }} <small>Kasus</small>
+                        {{-- Format: 1.234 --}}
+                        {{ number_format($overlaps->total(), 0, ',', '.') }} <small>Kasus</small>
                     </span>
                     <span class="progress-description text-xs text-muted">
                         Bidang yang saling beririsan
@@ -87,8 +91,9 @@
         </div>
     </div>
 
-    {{-- CHART AREA --}}
+    {{-- BARIS 3: CHART AREA --}}
     <div class="row">
+        {{-- Chart Donut: Proporsi Hak --}}
         <div class="col-md-5">
             <div class="card card-warning card-outline shadow h-100">
                 <div class="card-header">
@@ -97,7 +102,8 @@
                     </h3>
                 </div>
                 <div class="card-body">
-                    <div style="height: 350px;"> <canvas id="chartHak"></canvas>
+                    <div style="height: 350px;"> 
+                        <canvas id="chartHak"></canvas>
                     </div>
                 </div>
                 <div class="card-footer bg-white p-0">
@@ -113,7 +119,8 @@
                                 @foreach($statsHak as $s)
                                 <tr>
                                     <td><i class="fas fa-circle text-xs mr-2" style="color: #6c757d"></i>{{ $s->label }}</td>
-                                    <td class="text-right font-weight-bold">{{ number_format($s->total) }}</td>
+                                    {{-- Format: 1.234 --}}
+                                    <td class="text-right font-weight-bold">{{ number_format($s->total, 0, ',', '.') }}</td>
                                 </tr>
                                 @endforeach
                             </tbody>
@@ -123,6 +130,7 @@
             </div>
         </div>
 
+        {{-- Chart Bar: Top Desa --}}
         <div class="col-md-7">
             <div class="card card-success card-outline shadow h-100">
                 <div class="card-header">
@@ -131,14 +139,15 @@
                     </h3>
                 </div>
                 <div class="card-body">
-                    <div style="height: 400px;"> <canvas id="chartDesa"></canvas>
+                    <div style="height: 400px;"> 
+                        <canvas id="chartDesa"></canvas>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
-    {{-- TABEL TOP OVERLAP --}}
+    {{-- BARIS 4: TABEL TOP OVERLAP --}}
     <div class="row mt-4">
         <div class="col-md-12">
             <div class="card card-danger card-outline shadow">
@@ -165,11 +174,13 @@
                                     <td class="font-weight-bold">{{ $village->desa }}</td>
                                     <td class="text-right">
                                         <span class="badge badge-danger p-2" style="font-size: 14px">
-                                            {{ number_format($village->total_kasus) }}
+                                            {{-- Format: 1.234 --}}
+                                            {{ number_format($village->total_kasus, 0, ',', '.') }}
                                         </span>
                                     </td>
                                     <td class="text-right pr-4 font-weight-bold">
-                                        {{ number_format($village->total_luas, 2) }}
+                                        {{-- Format: 1.234,56 --}}
+                                        {{ number_format($village->total_luas, 2, ',', '.') }}
                                     </td>
                                 </tr>
                                 @empty
@@ -188,21 +199,28 @@
         </div>
     </div>
 
-    {{-- TABEL DETAIL OVERLAP --}}
+    {{-- BARIS 5: TABEL DETAIL OVERLAP & EXPORT --}}
     <div class="row mt-4">
         <div class="col-12">
             <div class="card card-secondary card-outline shadow">
-                <div class="card-header border-0 d-flex justify-content-between align-items-center bg-white">
+                <div class="card-header border-0 d-flex justify-content-between align-items-center bg-white flex-wrap">
                     <h3 class="card-title text-secondary font-weight-bold">
                         <i class="fas fa-list mr-2"></i>Detail Data Tumpang Tindih
                     </h3>
                     
-                    <div>
+                    <div class="d-flex align-items-center mt-2 mt-md-0">
                         @if(isset($lastUpdate))
-                            <span class="badge badge-light border mr-2 p-2">
+                            <span class="badge badge-light border mr-2 p-2 d-none d-md-inline-block">
                                 <i class="far fa-clock mr-1"></i> Update: {{ \Carbon\Carbon::parse($lastUpdate)->diffForHumans() }}
                             </span>
                         @endif
+                        
+                        {{-- TOMBOL EXPORT EXCEL --}}
+                        <a href="{{ route('statistics.exportOverlap', ['layer_id' => request('layer_id')]) }}" class="btn btn-success btn-sm shadow-sm mr-2">
+                            <i class="fas fa-file-excel mr-1"></i> Export Excel
+                        </a>
+
+                        {{-- TOMBOL UPDATE ANALISIS --}}
                         <form action="{{ route('statistics.run') }}" method="POST" style="display:inline">
                             @csrf
                             <button type="submit" class="btn btn-danger btn-sm shadow-sm" onclick="return confirm('Jalankan analisis ulang? Proses ini berjalan di background.')">
@@ -238,7 +256,8 @@
                                     <small class="text-muted">Kec. {{ $ov->kecamatan }}</small>
                                 </td>
                                 <td class="align-middle text-right font-weight-bold">
-                                    {{ number_format($ov->luas_overlap, 2) }} m²
+                                    {{-- Format: 1.234,56 --}}
+                                    {{ number_format($ov->luas_overlap, 2, ',', '.') }} m²
                                 </td>
                                 <td class="align-middle text-center">
                                     <a href="{{ route('dashboard', ['search' => $ov->aset_1]) }}" target="_blank" class="btn btn-xs btn-outline-info shadow-sm">
@@ -280,73 +299,89 @@
         // Warna-warni cerah
         var colors = ['#007bff', '#28a745', '#ffc107', '#dc3545', '#17a2b8', '#6610f2', '#e83e8c', '#fd7e14', '#6c757d'];
 
-        new Chart(ctxHak, {
-            type: 'doughnut',
-            data: {
-                labels: dataHak.map(x => x.label),
-                datasets: [{
-                    data: dataHak.map(x => x.total),
-                    backgroundColor: colors,
-                    borderWidth: 2,
-                    hoverOffset: 10
-                }]
-            },
-            options: {
-                maintainAspectRatio: false, 
-                responsive: true,
-                plugins: {
-                    legend: {
-                        display: true,
-                        position: 'right',
-                        labels: { font: { size: 12 } }
-                    }
+        if(dataHak.length > 0) {
+            new Chart(ctxHak, {
+                type: 'doughnut',
+                data: {
+                    labels: dataHak.map(x => x.label),
+                    datasets: [{
+                        data: dataHak.map(x => x.total),
+                        backgroundColor: colors,
+                        borderWidth: 2,
+                        hoverOffset: 10
+                    }]
                 },
-                layout: { padding: 20 }
-            }
-        });
+                options: {
+                    maintainAspectRatio: false, 
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'right',
+                            labels: { font: { size: 12 } }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.label || '';
+                                    if (label) label += ': ';
+                                    // FORMAT ANGKA INDONESIA DI TOOLTIP
+                                    label += context.raw.toLocaleString('id-ID');
+                                    return label;
+                                }
+                            }
+                        }
+                    },
+                    layout: { padding: 20 }
+                }
+            });
+        }
 
         // --- CHART DESA (BAR HORIZONTAL) ---
         var ctxDesa = document.getElementById('chartDesa').getContext('2d');
         var dataDesa = @json($statsDesa);
         
-        new Chart(ctxDesa, {
-            type: 'bar',
-            data: {
-                labels: dataDesa.map(x => x.desa),
-                datasets: [{
-                    label: 'Luas Aset (Hektar)',
-                    data: dataDesa.map(x => x.luas_hektar),
-                    backgroundColor: 'rgba(40, 167, 69, 0.7)',
-                    borderColor: '#28a745',
-                    borderWidth: 1,
-                    borderRadius: 4
-                }]
-            },
-            options: {
-                indexAxis: 'y',
-                maintainAspectRatio: false,
-                responsive: true,
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        callbacks: {
-                            label: function(context) {
-                                return context.raw.toLocaleString() + ' Hektar';
+        if(dataDesa.length > 0) {
+            new Chart(ctxDesa, {
+                type: 'bar',
+                data: {
+                    labels: dataDesa.map(x => x.desa),
+                    datasets: [{
+                        label: 'Luas Aset (Hektar)',
+                        data: dataDesa.map(x => x.luas_hektar),
+                        backgroundColor: 'rgba(40, 167, 69, 0.7)',
+                        borderColor: '#28a745',
+                        borderWidth: 1,
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    maintainAspectRatio: false,
+                    responsive: true,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    // FORMAT ANGKA INDONESIA DI TOOLTIP
+                                    return context.raw.toLocaleString('id-ID', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' Hektar';
+                                }
                             }
                         }
-                    }
-                },
-                scales: {
-                    x: {
-                        beginAtZero: true,
-                        grid: { borderDash: [2, 2] }
                     },
-                    y: {
-                        ticks: { font: { size: 11 } }
+                    scales: {
+                        x: {
+                            beginAtZero: true,
+                            grid: { borderDash: [2, 2] }
+                        },
+                        y: {
+                            ticks: { font: { size: 11 } }
+                        }
                     }
                 }
-            }
-        });
+            });
+        }
     });
 </script>
 @endpush

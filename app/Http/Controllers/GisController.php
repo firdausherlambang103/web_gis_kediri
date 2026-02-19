@@ -124,7 +124,7 @@ class GisController extends Controller
                     : "ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom::geometry, 0.00005))";
                 $strategy = ($zoom > 16 || !empty($search) || !empty($hak)) ? 'detail' : 'simplified';
 
-                $data = $query->select('id', 'name', 'properties', 'layer_id', DB::raw("$selectGeom as geometry"))->limit(3000)->get();
+                $data = $query->select('id', 'name', 'properties', 'layer_id', 'file_path', DB::raw("$selectGeom as geometry"))->limit(3000)->get();
                 
                 foreach ($data as $item) {
                     if (!$item->geometry) continue;
@@ -160,7 +160,7 @@ class GisController extends Controller
 
                     $features[] = [
                         'type' => 'Feature', 'geometry' => json_decode($item->geometry), 
-                        'properties' => array_merge(['id'=>$item->id, 'name'=>$item->name], $props)
+                        'properties' => array_merge(['id'=>$item->id, 'name'=>$item->name, 'file_path'=>$item->file_path], $props)
                     ];
                 }
             }
@@ -393,33 +393,63 @@ class GisController extends Controller
     public function storeDraw(Request $request)
     {
         try {
-            $request->validate(['name' => 'required', 'geometry' => 'required', 'color' => 'required', 'status' => 'required']);
+            // 1. Validasi Input (Tambahkan validasi file)
+            $request->validate([
+                'name' => 'required',
+                'geometry' => 'required',
+                'color' => 'required',
+                'status' => 'required',
+                'document' => 'nullable|file|mimes:pdf|max:5120' // Maksimal 5MB, hanya PDF
+            ]);
+
             $geometryJson = $request->geometry;
+            
+            // Hitung Luas
             $sqlLuas = "SELECT ST_Area(ST_SetSRID(ST_GeomFromGeoJSON(?), 4326)::geography) as luas_m2";
             $luasResult = DB::selectOne($sqlLuas, [$geometryJson]);
             $luas = $luasResult->luas_m2 ?? 0;
-            $layerId = $request->input('layer_id'); 
+            
+            $layerId = $request->input('layer_id');
+            
+            // 2. PROSES UPLOAD FILE
+            $filePath = null;
+            if ($request->hasFile('document')) {
+                // Simpan ke folder: storage/app/public/documents
+                $file = $request->file('document');
+                $filename = time() . '_' . preg_replace('/\s+/', '_', $file->getClientOriginalName());
+                $filePath = $file->storeAs('documents', $filename, 'public'); 
+            }
 
+            // 3. Simpan ke Database
             DB::table('spatial_features')->insert([
                 'name' => $request->name,
                 'layer_id' => $layerId,
+                'file_path' => $filePath, // <--- SIMPAN PATH FILE
                 'properties' => json_encode([
                     'type' => 'Manual',
                     'raw_data' => [
-                        'TIPEHAK' => $request->status, 'KECAMATAN' => $request->kecamatan ?? '-', 'KELURAHAN' => $request->desa ?? '-',
-                        'LUASTERTUL' => round($luas, 2), 'PENGGUNAAN' => $request->description
+                        'TIPEHAK' => $request->status, 
+                        'KECAMATAN' => $request->kecamatan ?? '-', 
+                        'KELURAHAN' => $request->desa ?? '-',
+                        'LUASTERTUL' => round($luas, 2), 
+                        'PENGGUNAAN' => $request->description
                     ],
-                    'color' => $request->color, 'description' => $request->description
+                    'color' => $request->color, 
+                    'description' => $request->description
                 ]),
                 'geom' => DB::raw("ST_Force2D(ST_SetSRID(ST_GeomFromGeoJSON('$geometryJson'), 4326))"),
-                'created_at' => now(), 'updated_at' => now()
+                'created_at' => now(), 
+                'updated_at' => now()
             ]);
 
             // --- LOGGING CREATE MANUAL ---
-            LogHelper::record('CREATE', $request->name, "Menambah aset manual tipe " . $request->status);
+            LogHelper::record('CREATE', $request->name, "Menambah aset manual dengan dokumen PDF");
 
-            return response()->json(['status' => 'success', 'message' => 'Data berhasil disimpan! Luas: ' . round($luas, 2) . ' m²']);
-        } catch (\Exception $e) { return response()->json(['status' => 'error', 'message' => $e->getMessage()], 500); }
+            return response()->json(['status' => 'success', 'message' => 'Data dan dokumen berhasil disimpan!']);
+            
+        } catch (\Exception $e) { 
+            return response()->json(['status' => 'error', 'message' => $e->getMessage()], 500); 
+        }
     }
 
     public function storeLayer(Request $request)
@@ -482,7 +512,8 @@ class GisController extends Controller
             'status' => $props['raw_data']['TIPEHAK'] ?? $props['raw_data']['TIPE_HAK'] ?? '-',
             'kecamatan' => $props['raw_data']['KECAMATAN'] ?? '-', 'desa' => $props['raw_data']['KELURAHAN'] ?? $props['raw_data']['DESA'] ?? '-',
             'luas' => $props['raw_data']['LUASTERTUL'] ?? $props['raw_data']['LUAS'] ?? 0, 'description' => $props['description'] ?? $props['raw_data']['PENGGUNAAN'] ?? '',
-            'color' => $props['color'] ?? '#ff0000', 'layer_id' => $item->layer_id
+            'color' => $props['color'] ?? '#ff0000', 'layer_id' => $item->layer_id,
+            'file_path' => $item->file_path // <--- Return File Path
         ]);
     }
 

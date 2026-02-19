@@ -30,6 +30,17 @@
             backdrop-filter: blur(5px);
         }
 
+        /* Style Legenda / Kamus Warna */
+        .legend-box {
+            position: absolute; bottom: 25px; left: 10px; z-index: 1000;
+            background: rgba(255, 255, 255, 0.95); padding: 10px 15px; border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2); width: 170px;
+            backdrop-filter: blur(5px); font-size: 0.85rem;
+        }
+        .legend-title { font-weight: bold; margin-bottom: 8px; font-size: 0.9rem; border-bottom: 1px solid #eee; padding-bottom: 5px; }
+        .legend-item { display: flex; align-items: center; margin-bottom: 4px; }
+        .legend-color { width: 16px; height: 16px; border-radius: 4px; margin-right: 8px; border: 1px solid #ccc; }
+
         .cluster-marker {
             background-color: rgba(220, 53, 69, 0.85);
             border: 3px solid white; border-radius: 50%;
@@ -79,6 +90,7 @@
                 <option value="">Semua Data</option>
                 <option value="HM">Hak Milik (HM)</option>
                 <option value="HGB">Hak Guna Bangunan</option>
+                <option value="HGU">Hak Guna Usaha</option>
                 <option value="HP">Hak Pakai (HP)</option>
                 <option value="WAKAF">Tanah Wakaf</option>
                 <option value="KOSONG">Belum Ada Hak</option>
@@ -132,10 +144,22 @@
         </button>
     </div>
 
+    {{-- LEGENDA / KAMUS WARNA --}}
+    <div class="legend-box">
+        <div class="legend-title"><i class="fas fa-info-circle text-primary mr-1"></i> Legenda Hak</div>
+        <div class="legend-item"><div class="legend-color" style="background: #28a745;"></div> Hak Milik (HM)</div>
+        <div class="legend-item"><div class="legend-color" style="background: #ffc107;"></div> HGB</div>
+        <div class="legend-item"><div class="legend-color" style="background: #17a2b8;"></div> Hak Pakai (HP)</div>
+        <div class="legend-item"><div class="legend-color" style="background: #fd7e14;"></div> HGU</div>
+        <div class="legend-item"><div class="legend-color" style="background: #6f42c1;"></div> Tanah Wakaf</div>
+        <div class="legend-item"><div class="legend-color" style="background: #6c757d;"></div> Tanah Negara</div>
+        <div class="legend-item"><div class="legend-color" style="background: #3388ff;"></div> Layer Lain</div>
+    </div>
+
     <div id="map"></div>
 </div>
 
-{{-- Modal Upload (Sama seperti sebelumnya) --}}
+{{-- Modal Upload SHP --}}
 <div class="modal fade" id="uploadModal" data-backdrop="static">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -184,7 +208,7 @@
     </div>
 </div>
 
-{{-- Include Modal Lain --}}
+{{-- Include Modal Edit (Jika Ada) --}}
 @include('admin.aset.partials.modals')
 
 {{-- Modal Add Layer --}}
@@ -212,7 +236,7 @@
     </div>
 </div>
 
-{{-- Modal Draw --}}
+{{-- Modal Draw (Create Manual) --}}
 <div class="modal fade" id="modalDraw" tabindex="-1" role="dialog" data-backdrop="static">
     <div class="modal-dialog" role="document">
         <div class="modal-content">
@@ -221,7 +245,8 @@
                 <button type="button" class="close text-white" onclick="cancelDraw()"><span aria-hidden="true">&times;</span></button>
             </div>
             <div class="modal-body">
-                <form id="formDraw">
+                {{-- Form ID dengan Multipart --}}
+                <form id="formDraw" enctype="multipart/form-data">
                     <input type="hidden" id="drawGeometry">
                     
                     <div class="form-group">
@@ -246,6 +271,7 @@
                                     <option value="Hak Milik">Hak Milik (HM)</option>
                                     <option value="Hak Pakai">Hak Pakai (HP)</option>
                                     <option value="Hak Guna Bangunan">HGB</option>
+                                    <option value="Hak Guna Usaha">HGU</option>
                                     <option value="Wakaf">Tanah Wakaf</option>
                                     <option value="Tanah Negara">Tanah Negara</option>
                                 </select>
@@ -274,10 +300,22 @@
                             </div>
                         </div>
                     </div>
+                    
                     <div class="form-group">
                         <label>Keterangan / Penggunaan</label>
                         <textarea id="drawDesc" class="form-control" rows="2" placeholder="Contoh: Sawah, Kebun, Bangunan..."></textarea>
                     </div>
+
+                    {{-- INPUT FILE PDF --}}
+                    <div class="form-group bg-light p-2 border rounded">
+                        <label class="font-weight-bold text-dark"><i class="fas fa-file-pdf text-danger mr-1"></i> Upload Dokumen (PDF)</label>
+                        <div class="custom-file">
+                            <input type="file" class="custom-file-input" id="drawDocument" accept="application/pdf">
+                            <label class="custom-file-label" for="drawDocument">Pilih file PDF...</label>
+                        </div>
+                        <small class="text-muted">Opsional. Maksimal 5MB.</small>
+                    </div>
+
                 </form>
             </div>
             <div class="modal-footer">
@@ -310,18 +348,40 @@
     if(paramSearch) $('#searchMap').val(paramSearch);
     if(paramHak) $('#filterHak').val(paramHak);
 
-    // === 2. INIT PETA ===
+    // === 2. INIT PETA (KONFIGURASI HIGH ZOOM) ===
     var startLat = paramLat ? parseFloat(paramLat) : -7.8;
     var startLng = paramLng ? parseFloat(paramLng) : 112.0;
-    var startZoom = paramLat ? 18 : 12;
+    var startZoom = paramLat ? 19 : 13;
 
-    var map = L.map('map', { zoomControl: false }).setView([startLat, startLng], startZoom); 
+    // Konfigurasi Peta Utama: maxZoom 22 memungkinkan zoom sangat dekat
+    var map = L.map('map', { 
+        zoomControl: false, 
+        maxZoom: 22  // <--- HIGH ZOOM ENABLED
+    }).setView([startLat, startLng], startZoom); 
+
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-    var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: 'OSM' });
-    var googleSat = L.tileLayer('http://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',{ maxZoom: 20, subdomains:['mt0','mt1','mt2','mt3'] });
-    osm.addTo(map);
-    L.control.layers({ "Peta Jalan": osm, "Satelit": googleSat }, null, { position: 'bottomright' }).addTo(map);
+    // 1. Layer OSM (Jalan)
+    var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { 
+        attribution: 'OSM',
+        maxNativeZoom: 19, // OSM aslinya cuma sampai 19
+        maxZoom: 22        // Kita paksa digital zoom sampai 22
+    });
+
+    // 2. Layer Google Satellite
+    var googleSat = L.tileLayer('http://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',{ 
+        subdomains:['mt0','mt1','mt2','mt3'],
+        maxNativeZoom: 20, // Google Satelit biasanya tajam sampai level 20
+        maxZoom: 22        // Digital zoom sampai 22
+    });
+
+    osm.addTo(map); // Default layer
+
+    L.control.layers({ 
+        "Peta Jalan (OSM)": osm, 
+        "Satelit (Google)": googleSat 
+    }, null, { position: 'bottomright' }).addTo(map);
+    
     L.Control.geocoder({ position: 'topleft' }).addTo(map);
 
     if(paramLat && paramLng) {
@@ -335,16 +395,11 @@
         var id = $(this).data('id');
         var newColor = $(this).val();
         
-        // Update di database
         $.post("{{ route('layer.updateColor') }}", {
-            _token: "{{ csrf_token() }}",
-            id: id,
-            color: newColor
+            _token: "{{ csrf_token() }}", id: id, color: newColor
         }, function(res) {
             if(res.status == 'success') {
-                // Update atribut data checkbox agar loadData() memakai warna baru
                 $('#layer_' + id).data('color', newColor);
-                // Refresh peta
                 loadData();
             }
         });
@@ -355,10 +410,7 @@
     $('#opacitySlider').on('input', function() {
         currentOpacity = $(this).val();
         $('#opacityVal').text(Math.round(currentOpacity * 100) + '%');
-        
-        // Update style layer yang sudah ada tanpa reload
         geoJsonLayer.eachLayer(function(layer) {
-            // Hanya ubah opacity jika itu adalah Polygon/Bidang (bukan marker)
             if (layer.options && layer.options.fill) {
                 layer.setStyle({ fillOpacity: currentOpacity });
             }
@@ -368,7 +420,6 @@
     function createNewLayer() {
         var name = $('#newLayerName').val();
         var color = $('#newLayerColor').val();
-        
         if(!name) { Swal.fire('Error', 'Nama Layer wajib diisi', 'error'); return; }
 
         $.post("{{ route('layer.store') }}", {
@@ -376,14 +427,12 @@
         }, function(res) {
             $('#modalAddLayer').modal('hide');
             Swal.fire('Sukses', 'Layer berhasil dibuat', 'success').then(() => location.reload());
-        }).fail(function() {
-            Swal.fire('Gagal', 'Terjadi kesalahan', 'error');
-        });
+        }).fail(function() { Swal.fire('Gagal', 'Terjadi kesalahan', 'error'); });
     }
 
     $('.layer-checkbox').change(function() { loadData(); });
 
-    // === 4. GAMBAR MANUAL ===
+    // === 4. GAMBAR MANUAL & SAVE (DENGAN FILE UPLOAD) ===
     var drawnItems = new L.FeatureGroup(); map.addLayer(drawnItems);
     var drawControl = new L.Control.Draw({ edit: { featureGroup: drawnItems }, draw: { polygon: true, rectangle: true, marker: true, circle: false, polyline: false, circlemarker: false } });
     map.addControl(drawControl);
@@ -400,6 +449,7 @@
     function cancelDraw() {
         if(currentLayer) drawnItems.removeLayer(currentLayer);
         $('#modalDraw').modal('hide'); $('#formDraw')[0].reset();
+        $('.custom-file-label').html('Pilih file...');
     }
 
     function saveDraw() {
@@ -407,39 +457,58 @@
         var status = $('#drawStatus').val();
         if(!name || !status) { Swal.fire('Error', 'Nama dan Status wajib diisi!', 'error'); return; }
 
-        $('#modalDraw').modal('hide'); $('#map-loading').fadeIn(); $('#loading-text').text("Menyimpan...");
+        $('#modalDraw').modal('hide'); 
+        $('#map-loading').fadeIn(); 
+        $('#loading-text').text("Menyimpan...");
+
+        // === MENGGUNAKAN FORMDATA UNTUK UPLOAD FILE ===
+        var formData = new FormData();
+        formData.append('_token', "{{ csrf_token() }}");
+        formData.append('layer_id', $('#drawLayerId').val());
+        formData.append('name', name);
+        formData.append('status', status);
+        formData.append('color', $('#drawColor').val());
+        formData.append('kecamatan', $('#drawKec').val());
+        formData.append('desa', $('#drawDesa').val());
+        formData.append('description', $('#drawDesc').val());
+        formData.append('geometry', $('#drawGeometry').val());
+
+        // Ambil File PDF jika ada
+        var fileInput = $('#drawDocument')[0].files[0];
+        if(fileInput) {
+            formData.append('document', fileInput);
+        }
+
         $.ajax({
-            url: "{{ route('asset.storeDraw') }}", type: "POST",
-            data: {
-                _token: "{{ csrf_token() }}", name: name, status: status, 
-                color: $('#drawColor').val(), layer_id: $('#drawLayerId').val(), 
-                kecamatan: $('#drawKec').val(), desa: $('#drawDesa').val(), 
-                description: $('#drawDesc').val(), geometry: $('#drawGeometry').val()
-            },
+            url: "{{ route('asset.storeDraw') }}",
+            type: "POST",
+            data: formData,
+            contentType: false, // Wajib false
+            processData: false, // Wajib false
             success: function(res) {
                 $('#map-loading').fadeOut(); Swal.fire('Berhasil', res.message, 'success');
-                $('#formDraw')[0].reset(); drawnItems.clearLayers(); loadData();
+                $('#formDraw')[0].reset(); $('.custom-file-label').html('Pilih file...');
+                drawnItems.clearLayers(); loadData();
             },
-            error: function(err) { $('#map-loading').fadeOut(); Swal.fire('Gagal', 'Terjadi kesalahan server.', 'error'); }
+            error: function(xhr) { 
+                $('#map-loading').fadeOut(); 
+                var msg = xhr.responseJSON ? xhr.responseJSON.message : 'Terjadi kesalahan server.';
+                Swal.fire('Gagal', msg, 'error'); 
+            }
         });
     }
 
     // === 5. LOAD DATA & VISUALISASI ===
     function getColor(props) {
-        // Prioritas Warna: 
-        // 1. Warna Manual per Item
-        // 2. Warna Layer (dari database)
-        // 3. Warna Default
-        
         if (props.color && props.color !== '#ff0000') return props.color;
         if (props.layer_color) return props.layer_color;
         
-        // Fallback Logic Hak
         var raw = props.raw_data || {};
         var tipe = raw.TIPEHAK || raw.TIPE_HAK || 'Import';
         tipe = tipe.toString().toUpperCase();
         if (tipe.includes('HM') || tipe.includes('MILIK')) return '#28a745';
         if (tipe.includes('HGB') || tipe.includes('BANGUNAN')) return '#ffc107';
+        if (tipe.includes('HGU') || tipe.includes('USAHA')) return '#fd7e14';
         if (tipe.includes('HP') || tipe.includes('PAKAI')) return '#17a2b8';
         if (tipe.includes('WAKAF')) return '#6f42c1';
         return '#3388ff';
@@ -449,7 +518,6 @@
     var geoJsonLayer = L.geoJSON(null, {
         style: function(feature) {
             var col = getColor(feature.properties || {});
-            // Gunakan currentOpacity global
             return { color: col, fillColor: col, weight: 1, opacity: 1, fillOpacity: currentOpacity };
         },
         pointToLayer: function(feature, latlng) {
@@ -467,7 +535,6 @@
                 layer.on('click', function(e) {
                     if (selectedLayer) geoJsonLayer.resetStyle(selectedLayer);
                     selectedLayer = e.target;
-                    // Highlight selected
                     selectedLayer.setStyle({ color: '#ff0000', weight: 3, fillOpacity: 0.9 });
                     selectedLayer.bringToFront();
                 });
@@ -479,22 +546,35 @@
                 var desa = raw.KELURAHAN || raw.DESA || '-';
                 var kec = raw.KECAMATAN || '-';
                 var ket = p.description || raw.PENGGUNAAN || '-';
-
+                var luasFormatted = parseFloat(luas).toLocaleString('id-ID', {
+                    minimumFractionDigits: 0,
+                    maximumFractionDigits: 2
+                });
                 var content = `
                     <div style="min-width:220px;">
                         <h6 class="text-primary font-weight-bold border-bottom pb-2 mb-2">${p.name}</h6>
                         <table class="popup-table">
                             <tr><td class="bg-label">Status</td><td>${tipe}</td></tr>
-                            <tr><td class="bg-label">Luas</td><td>${parseFloat(luas).toLocaleString('id-ID')} m²</td></tr>
+                            <tr><td class="bg-label">Luas</td><td>${luasFormatted} m²</td></tr>
                             <tr><td class="bg-label">Lokasi</td><td>${desa}, ${kec}</td></tr>
                             <tr><td class="bg-label">Ket</td><td>${ket}</td></tr>
-                        </table>
+                        </table>`;
+                
+                // Tambahan Tombol Lihat Dokumen (Jika Ada)
+                if (p.file_path) {
+                    content += `<a href="/storage/${p.file_path}" target="_blank" class="btn btn-sm btn-block btn-info mb-2">
+                                    <i class="fas fa-file-pdf"></i> Lihat Dokumen
+                                </a>`;
+                }
+
+                content += `
                         <div class="mt-2 d-flex justify-content-between">
                             <button class="btn btn-xs btn-warning text-white" onclick="editAsset(${p.id})"><i class="fas fa-edit"></i> Edit</button>
                             <button class="btn btn-xs btn-danger" onclick="deleteAsset(${p.id})"><i class="fas fa-trash"></i> Hapus</button>
                             <a href="/aset?search=${p.name}" target="_blank" class="btn btn-xs btn-outline-info">Detail</a>
                         </div>
                     </div>`;
+                
                 layer.bindPopup(content);
             }
         }
@@ -534,7 +614,7 @@
     map.on('moveend', loadData); 
     loadData();
 
-    // === 6. UPLOAD LOGIC ===
+    // === 6. UPLOAD LOGIC (SHP UPLOAD) ===
     var selectedFiles = [];
     $('#shpFilesInput').on('change', function() {
         selectedFiles = Array.from($(this)[0].files);
@@ -552,7 +632,6 @@
         
         let successCount = 0; 
         let failCount = 0;
-        let errorDetails = [];
 
         for (let i = 0; i < selectedFiles.length; i++) {
             let file = selectedFiles[i];
@@ -568,73 +647,36 @@
             try {
                 let response = await fetch("{{ route('asset.uploadShp') }}", { 
                     method: 'POST', 
-                    headers: { 
-                        'X-CSRF-TOKEN': '{{ csrf_token() }}', 
-                        'Accept': 'application/json',
-                        'X-Requested-With': 'XMLHttpRequest'
-                    }, 
+                    headers: { 'X-CSRF-TOKEN': '{{ csrf_token() }}', 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, 
                     body: formData 
                 });
                 
-                let responseText = await response.text();
-                let result;
-
-                try {
-                    result = JSON.parse(responseText); 
-                } catch (e) {
-                    throw new Error("Server Error HTML: " + responseText);
-                }
+                let result = await response.json();
                 
                 if (response.ok) {
                     successCount++; 
-                    let statsMsg = result.message || 'Berhasil diupload';
-                    $('#uploadLog').append(`<div class="text-success small border-bottom py-1"><i class="fas fa-check-circle"></i> <b>${file.name}</b>: ${statsMsg}</div>`);
+                    $('#uploadLog').append(`<div class="text-success small border-bottom py-1"><i class="fas fa-check-circle"></i> <b>${file.name}</b>: Berhasil</div>`);
                 } else { 
                     failCount++; 
-                    let msg = result.message || 'Gagal';
-                    errorDetails.push(`<b>${file.name}</b>: <span class="text-danger">${msg}</span>`);
-                    $('#uploadLog').append(`<div class="text-danger small border-bottom py-1"><i class="fas fa-times-circle"></i> <b>${file.name}</b>: ${msg}</div>`); 
+                    $('#uploadLog').append(`<div class="text-danger small border-bottom py-1"><i class="fas fa-times-circle"></i> <b>${file.name}</b>: ${result.message}</div>`); 
                 }
             } catch (error) { 
                 failCount++; 
-                let errorMsg = error.message || "Masalah Koneksi";
-                if(errorMsg.includes("Server Error")) errorMsg = "Server Error (Cek Console)";
-                errorDetails.push(`<b>${file.name}</b>: <span class="text-danger">${errorMsg}</span>`);
-                $('#uploadLog').append(`<div class="text-danger small"><i class="fas fa-exclamation-triangle"></i> ${file.name}: ${errorMsg}</div>`); 
+                $('#uploadLog').append(`<div class="text-danger small"><i class="fas fa-exclamation-triangle"></i> ${file.name}: Error Koneksi</div>`); 
             }
         }
         
         $('#progressBar').css('width', '100%');
         $('#progressText').text('Selesai!'); $('#progressPercent').text('100%');
         $('#btnStartUpload').html('Selesai').removeClass('btn-success').addClass('btn-secondary');
-        
         loadData(); 
-        
-        if(failCount > 0) {
-            Swal.fire({
-                title: 'Proses Selesai',
-                icon: 'warning',
-                html: `
-                    <div class="text-left">
-                        <p class="mb-2"><b>Hasil Upload:</b></p>
-                        <ul class="small">
-                            <li class="text-success">Berhasil: ${successCount} file</li>
-                            <li class="text-danger">Gagal: ${failCount} file</li>
-                        </ul>
-                        <div class="alert alert-secondary small p-2">
-                            Detail error dapat dilihat pada kotak log di bawah tombol upload.
-                        </div>
-                    </div>
-                `
-            });
-        } else {
-            Swal.fire('Sukses', `Berhasil upload ${successCount} file!`, 'success');
-        }
+        Swal.fire('Selesai', `Sukses: ${successCount}, Gagal: ${failCount}`, 'info');
     }
     
     function resetUploadModal() {
         $('#btnStartUpload').prop('disabled', false).html('<i class="fas fa-upload"></i> Mulai Upload').addClass('btn-success').removeClass('btn-secondary');
         $('#progressArea').hide(); $('#uploadLog').hide().html(''); selectedFiles = [];
+        $('.custom-file-label').html('Pilih file...');
     }
 
     // === 7. FUNGSI EDIT & DELETE ===
